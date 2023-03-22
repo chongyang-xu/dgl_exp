@@ -109,7 +109,7 @@ def dtype(input):
 
 
 def ndim(input):
-    return input.ndim
+    return tf.rank(input)
 
 
 def context(input):
