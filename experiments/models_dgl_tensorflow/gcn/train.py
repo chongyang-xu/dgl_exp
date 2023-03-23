@@ -4,6 +4,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from gcn import GCN
+from graphsage import GraphSAGE
 
 import dgl
 from dgl.data import CiteseerGraphDataset, CoraGraphDataset, PubmedGraphDataset
@@ -70,14 +71,13 @@ def main(args):
         g.ndata["norm"] = tf.expand_dims(norm, -1)
 
         # create GCN model
-        model = GCN(
-            in_feats,
-            args.n_hidden,
-            n_classes,
-            args.n_layers,
-            tf.nn.relu,
-            args.dropout,
-        )
+        if args.model == 'gcn':
+            model = GCN(
+                in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
+        else:
+            assert (args.model == 'sage')
+            model = GraphSAGE(
+                in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
 
         loss_fcn = tf.keras.losses.SparseCategoricalCrossentropy(
             from_logits=True
@@ -131,6 +131,12 @@ if __name__ == "__main__":
         type=str,
         default="cora",
         help="Dataset name ('cora', 'citeseer', 'pubmed').",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gcn",
+        help="Dataset name ('gcn', 'sage').",
     )
     parser.add_argument(
         "--dropout", type=float, default=0.5, help="dropout probability"

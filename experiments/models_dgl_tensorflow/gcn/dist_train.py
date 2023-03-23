@@ -7,6 +7,7 @@ from multiprocessing import util
 import numpy as np
 import tensorflow as tf
 from gcn import GCN
+from graphsage import GraphSAGE
 
 import dgl
 from dgl.data import CiteseerGraphDataset, CoraGraphDataset, PubmedGraphDataset
@@ -14,8 +15,9 @@ from dgl.data import CiteseerGraphDataset, CoraGraphDataset, PubmedGraphDataset
 tf.config.run_functions_eagerly(True)
 tf.data.experimental.enable_debug_mode()
 
-def evaluate(model, features, labels, mask):
-    logits = model(features, training=False)
+
+def evaluate(model, g, features, labels, mask):
+    logits = model(g, features, training=False)
     logits = logits[mask]
     labels = labels[mask]
     indices = tf.math.argmax(logits, axis=1)
@@ -52,7 +54,7 @@ def get_train_strategy(args):
     if args.n_worker == 1:
         # reference https://www.tensorflow.org/tutorials/distribute/custom_training
         train_strategy = tf.distribute.MirroredStrategy(
-            devices=["/gpu:0", "/gpu:1"],
+            devices=["/gpu:0"],
             cross_device_ops=tf.distribute.HierarchicalCopyAllReduce()
         )
     elif args.n_workser > 1:
@@ -124,10 +126,8 @@ def main(args):
 
     def dataset_fn(input_context):
         def input_gen():
-            count = 0
-            while count < 3:
-                count = count + 1
-                yield g.ndata["feat"], g.ndata["label"], g.ndata["train_mask"]
+            yield g.ndata["feat"], g.ndata["label"], g.ndata["train_mask"]
+            yield g.ndata["feat"], g.ndata["label"], g.ndata["train_mask"]
 
         ds = tf.data.Dataset.from_generator(
             input_gen, output_signature=(
@@ -138,20 +138,28 @@ def main(args):
                 tf.TensorSpec(shape=g.ndata["train_mask"].shape,
                               dtype=g.ndata["train_mask"].dtype))
         )
+        #ds = ds.prefetch(2)
         return ds
+
+    multi_worker_dataset = train_strategy.distribute_datasets_from_function(
+        dataset_fn)
 
     with train_strategy.scope():
         # create GCN model
-        model = GCN(
-            g, in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
+        if args.model == 'gcn':
+            model = GCN(
+                in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
+        else:
+            assert (args.model == 'sage')
+            model = GraphSAGE(
+                in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
+
         # use optimizer
         optimizer = tf.keras.optimizers.Adam(
             learning_rate=args.lr, epsilon=1e-8)
         train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
             name='train_accuracy')
-
-        multi_worker_dataset = train_strategy.distribute_datasets_from_function(
-            dataset_fn)
+        g = g
 
     @tf.function
     def val_step(iterator):
@@ -168,9 +176,9 @@ def main(args):
             features, labels, train_mask = inputs
 
             with tf.GradientTape() as tape:
-                logits = model(features)
+                logits = model(g, features)
                 loss_value = tf.keras.losses.SparseCategoricalCrossentropy(
-                    from_logits=True)(labels[train_mask], logits[train_mask])
+                    reduction=tf.keras.losses.Reduction.SUM, from_logits=True)(labels[train_mask], logits[train_mask])
 
                 # Manually Weight Decay
                 # We found Tensorflow has a different implementation on weight decay
@@ -249,6 +257,12 @@ if __name__ == "__main__":
         type=str,
         default="cora",
         help="Dataset name ('cora', 'citeseer', 'pubmed').",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gcn",
+        help="Dataset name ('gcn', 'sage').",
     )
     parser.add_argument(
         "--dropout", type=float, default=0.5, help="dropout probability"
