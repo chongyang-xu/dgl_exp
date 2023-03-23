@@ -11,9 +11,8 @@ from gcn import GCN
 import dgl
 from dgl.data import CiteseerGraphDataset, CoraGraphDataset, PubmedGraphDataset
 
-# data preparation
-# val set, test set
-# graphsage
+tf.config.run_functions_eagerly(True)
+tf.data.experimental.enable_debug_mode()
 
 def evaluate(model, features, labels, mask):
     logits = model(features, training=False)
