@@ -9,8 +9,8 @@ import dgl
 from dgl.data import CiteseerGraphDataset, CoraGraphDataset, PubmedGraphDataset
 
 
-def evaluate(model, features, labels, mask):
-    logits = model(features, training=False)
+def evaluate(model, g, features, labels, mask):
+    logits = model(g, features, training=False)
     logits = logits[mask]
     labels = labels[mask]
     indices = tf.math.argmax(logits, axis=1)
@@ -43,17 +43,14 @@ def main(args):
         val_mask = g.ndata["val_mask"]
         test_mask = g.ndata["test_mask"]
         in_feats = features.shape[1]
-        n_classes = data.num_labels
-        n_edges = data.graph.number_of_edges()
+        n_classes = data.num_classes
         print(
             """----Data statistics------'
-        #Edges %d
         #Classes %d
         #Train samples %d
         #Val samples %d
         #Test samples %d"""
             % (
-                n_edges,
                 n_classes,
                 train_mask.numpy().sum(),
                 val_mask.numpy().sum(),
@@ -65,7 +62,6 @@ def main(args):
         if args.self_loop:
             g = dgl.remove_self_loop(g)
             g = dgl.add_self_loop(g)
-        n_edges = g.number_of_edges()
         # normalization
         degs = tf.cast(tf.identity(g.in_degrees()), dtype=tf.float32)
         norm = tf.math.pow(degs, -0.5)
@@ -75,7 +71,6 @@ def main(args):
 
         # create GCN model
         model = GCN(
-            g,
             in_feats,
             args.n_hidden,
             n_classes,
@@ -99,7 +94,7 @@ def main(args):
                 t0 = time.time()
             # forward
             with tf.GradientTape() as tape:
-                logits = model(features)
+                logits = model(g, features)
                 loss_value = loss_fcn(labels[train_mask], logits[train_mask])
                 # Manually Weight Decay
                 # We found Tensorflow has a different implementation on weight decay
@@ -115,19 +110,17 @@ def main(args):
             if epoch >= 3:
                 dur.append(time.time() - t0)
 
-            acc = evaluate(model, features, labels, val_mask)
+            acc = evaluate(model, g, features, labels, val_mask)
             print(
-                "Epoch {:05d} | Time(s) {:.4f} | Loss {:.4f} | Accuracy {:.4f} | "
-                "ETputs(KTEPS) {:.2f}".format(
+                "Epoch {:05d} | Time(s) {:.4f} | Loss {:.4f} | Accuracy {:.4f}".format(
                     epoch,
                     np.mean(dur),
                     loss_value.numpy().item(),
                     acc,
-                    n_edges / np.mean(dur) / 1000,
                 )
             )
 
-        acc = evaluate(model, features, labels, test_mask)
+        acc = evaluate(model, g, features, labels, test_mask)
         print("Test Accuracy {:.4f}".format(acc))
 
 
