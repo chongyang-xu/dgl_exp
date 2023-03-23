@@ -25,6 +25,7 @@ def evaluate(model, features, labels, mask):
 
 # Checkpoint saving and restoring
 
+
 def _is_chief(task_type, task_id, cluster_spec):
     return (task_type is None
             or task_type == 'chief'
@@ -69,6 +70,7 @@ def get_train_strategy(args):
             communication_options=communication_options)
     else:
         raise ValueError("Invalid worker num: {}".format(args.n_workser))
+    return train_strategy
 
 
 def load_dataset(args):
@@ -81,6 +83,24 @@ def load_dataset(args):
         dataset = PubmedGraphDataset()
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))
+
+    train_mask = dataset[0].ndata["train_mask"]
+    val_mask = dataset[0].ndata["val_mask"]
+    test_mask = dataset[0].ndata["test_mask"]
+    n_classes = dataset.num_classes
+    print(
+        """----Data statistics------'
+    #Classes %d
+    #Train samples %d
+    #Val samples %d
+    #Test samples %d"""
+        % (
+            n_classes,
+            train_mask.numpy().sum(),
+            val_mask.numpy().sum(),
+            test_mask.numpy().sum(),
+        )
+    )
     return dataset
 
 
@@ -90,9 +110,36 @@ def main(args):
 
     checkpoint_dir = os.path.join(util.get_temp_dir(), 'ckpt')
 
+#    train_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
+#    test_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
+
     dataset = load_dataset(args)
-    train_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
-    test_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
+    g = dataset[0]
+    # add self loop
+    if args.self_loop:
+        g = dgl.remove_self_loop(g)
+        g = dgl.add_self_loop(g)
+
+    in_feats = g.ndata["feat"].shape[1]
+    n_classes = dataset.num_classes
+
+    def dataset_fn(input_context):
+        def input_gen():
+            count = 0
+            while count < 3:
+                count = count + 1
+                yield g.ndata["feat"], g.ndata["label"], g.ndata["train_mask"]
+
+        ds = tf.data.Dataset.from_generator(
+            input_gen, output_signature=(
+                tf.TensorSpec(shape=g.ndata["feat"].shape,
+                              dtype=g.ndata["feat"].dtype),
+                tf.TensorSpec(shape=g.ndata["label"].shape,
+                              dtype=g.ndata["label"].dtype),
+                tf.TensorSpec(shape=g.ndata["train_mask"].shape,
+                              dtype=g.ndata["train_mask"].dtype))
+        )
+        return ds
 
     with train_strategy.scope():
         # create GCN model
@@ -103,12 +150,14 @@ def main(args):
             learning_rate=args.lr, epsilon=1e-8)
         train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
             name='train_accuracy')
+
         multi_worker_dataset = train_strategy.distribute_datasets_from_function(
-            dataset)
+            dataset_fn)
+
     @tf.function
     def val_step(iterator):
         # https://www.tensorflow.org/tutorials/distribute/custom_training
-        def step_fn():
+        def step_fn(inputs):
             test_loss = []
             test_accuracy = []
         return train_strategy.run(step_fn, args=(next(iterator),))
@@ -116,13 +165,14 @@ def main(args):
     @tf.function
     def train_step(iterator):
         """Training step function."""
-
         def step_fn(inputs):
-            features, labels, train_mask, val_mask = inputs
+            features, labels, train_mask = inputs
+
             with tf.GradientTape() as tape:
                 logits = model(features)
                 loss_value = tf.keras.losses.SparseCategoricalCrossentropy(
                     from_logits=True)(labels[train_mask], logits[train_mask])
+
                 # Manually Weight Decay
                 # We found Tensorflow has a different implementation on weight decay
                 # of Adam(W) optimizer with PyTorch. And this results in worse results.
@@ -150,8 +200,8 @@ def main(args):
     # checkpoint
     if args.use_checkpoint:
         task_type, task_id, cluster_spec = (train_strategy.cluster_resolver.task_type,
-                                    train_strategy.cluster_resolver.task_id,
-                                    train_strategy.cluster_resolver.cluster_spec())
+                                            train_strategy.cluster_resolver.task_id,
+                                            train_strategy.cluster_resolver.cluster_spec())
 
         checkpoint = tf.train.Checkpoint(
             model=model, epoch=epoch, step_in_epoch=step_in_epoch)
@@ -166,7 +216,7 @@ def main(args):
 
     # train loop
     n_epoch = args.n_epochs
-    step_per_epoch = args.num_steps_per_epoch
+    step_per_epoch = args.n_steps_per_epoch
     while epoch.numpy() < n_epoch:
         iterator = iter(multi_worker_dataset)
         total_loss = 0.0
@@ -178,7 +228,7 @@ def main(args):
             step_in_epoch.assign_add(1)
         train_loss = total_loss / num_batches
 
-        #val_step(iterator)
+        # val_step(iterator)
         print('Epoch: %d, accuracy: %f, train_loss: %f.'
               % (epoch.numpy(), train_accuracy.result(), train_loss))
 
@@ -191,6 +241,7 @@ def main(args):
 
         epoch.assign_add(1)
         step_in_epoch.assign(0)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GCN")
@@ -206,7 +257,10 @@ if __name__ == "__main__":
     parser.add_argument("--gpu", type=int, default=-1, help="gpu")
     parser.add_argument("--lr", type=float, default=1e-2, help="learning rate")
     parser.add_argument(
-        "--n-epochs", type=int, default=200, help="number of training epochs"
+        "--n-epochs", type=int, default=10, help="number of training epochs"
+    )
+    parser.add_argument(
+        "--n-steps-per-epoch", type=int, default=1, help="number of steps in one epoch"
     )
     parser.add_argument(
         "--batch-size-per-gpu", type=int, default=200, help="batch_size for 1 gpu, global batchsize will be calculated for dist training"
@@ -232,6 +286,12 @@ if __name__ == "__main__":
         help="use checkpoint (default=False)",
     )
     parser.set_defaults(use_checkpoint=False)
+    parser.add_argument(
+        "--n-worker", type=int, default=1, help="number of total workers"
+    )
+    parser.add_argument(
+        "--worker-idx", type=int, default=0, help="index of worker self"
+    )
     args = parser.parse_args()
     print(args)
 
