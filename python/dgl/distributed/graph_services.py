@@ -493,7 +493,9 @@ def _distributed_access(g, nodes, issue_remote_req, local_access):
     partition_id = partition_book.nid2partid(nodes)
     local_nids = None
     for pid in range(partition_book.num_partitions()):
+        assert F.context(nodes) == g.device
         node_id = F.boolean_mask(nodes, partition_id == pid)
+        assert F.context(node_id) == g.device #TODO(ds4gnn): BUG? assert failed when call from exp:tf:gcn:dist_train.py
         # We optimize the sampling on a local partition if the server and the client
         # run on the same machine. With a good partitioning, most of the seed nodes
         # should reside in the local partition. If the server and the client

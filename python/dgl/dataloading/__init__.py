@@ -11,3 +11,6 @@ from .shadow import *
 if F.get_preferred_backend() == "pytorch":
     from .dataloader import *
     from .dist_dataloader import *
+
+elif F.get_preferred_backend() == "tensorflow":
+    from .dist_dataloader import *

@@ -12,6 +12,13 @@ from graphsage import GraphSAGE
 
 import dgl
 from dgl.data import CiteseerGraphDataset, CoraGraphDataset, PubmedGraphDataset
+from dgl.dataloading import NeighborSampler
+from dgl.dataloading import DistNodeDataLoader
+# from dgl.dataloading import DataLoader #DataLoader only support pytorch
+
+from tensorflow.python.ops.numpy_ops import np_config
+np_config.enable_numpy_behavior()  # for enumerate on DistNodeDataLoader
+
 
 tf.config.run_functions_eagerly(True)
 tf.data.experimental.enable_debug_mode()
@@ -55,7 +62,7 @@ def get_train_strategy(args):
     if args.n_worker == 1:
         # reference https://www.tensorflow.org/tutorials/distribute/custom_training
         train_strategy = tf.distribute.MirroredStrategy(
-            devices=["/gpu:0"],
+            devices=["/gpu:0", "/gpu:1"],
             cross_device_ops=tf.distribute.HierarchicalCopyAllReduce()
         )
     elif args.n_workser > 1:
@@ -224,12 +231,14 @@ def main(args):
     def train_step(iterator):
         """Training step function."""
         def step_fn(inputs):
-            features, labels, train_mask = inputs
+            (input_nodes, seeds, blocks) = inputs
+            batch_features = g.ndata['feat'][input_nodes]
+            batch_labels = g.ndata['label'][seeds]
 
             with tf.GradientTape() as tape:
-                logits = model(g, features)
+                logits = model(blocks, batch_features)
                 loss_value = tf.keras.losses.SparseCategoricalCrossentropy(
-                    reduction=tf.keras.losses.Reduction.SUM, from_logits=True)(labels[train_mask], logits[train_mask])
+                    reduction=tf.keras.losses.Reduction.SUM, from_logits=True)(batch_labels, logits)
 
                 # Manually Weight Decay
                 # We found Tensorflow has a different implementation on weight decay
@@ -276,7 +285,7 @@ def main(args):
     n_epoch = args.n_epochs
     step_per_epoch = args.n_steps_per_epoch
     while epoch.numpy() < n_epoch:
-        iterator = iter(multi_worker_dataset)
+        iterator = iter(dist_train_dataloader)
         total_loss = 0.0
         num_batches = 0
 
