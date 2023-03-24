@@ -5277,7 +5277,7 @@ class DGLGraph(object):
         The case of heterogeneous graphs is the same.
         """
         return F.to_backend_ctx(self._graph.ctx)
-
+    #TODO(ds4gnn): mark data movement api of DGLGraph
     def to(self, device, **kwargs):  # pylint: disable=invalid-name
         """Move ndata, edata and graph structure to the targeted device (cpu/gpu).
 

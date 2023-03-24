@@ -635,7 +635,7 @@ def expand_as_pair(input_, g=None):
     elif g is not None and g.is_block:
         if isinstance(input_, Mapping):
             input_dst = {
-                k: F.narrow_row(v, 0, g.number_of_dst_nodes(k))
+                k: F.narrow_row(v, 0, g.number_of_dst_nodes(k)) #TODO(ds4gnn): narrow feat_vec by a block
                 for k, v in input_.items()
             }
         else:

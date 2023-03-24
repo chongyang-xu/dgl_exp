@@ -78,7 +78,7 @@ def copy_u(u, out):
     The above example is equivalent to the following user defined function:
 
     >>> def message_func(edges):
-    >>>     return {'m': edges.src['h']}
+    >>>     return {'m': edges.src['h']} #TODO(ds4gnn): what is src?
     """
     return CopyMessageFunction(TargetCode.SRC, u, out)
 

@@ -127,7 +127,7 @@ class CitationGraphDataset(DGLBuiltinDataset):
             graph = nx.Graph(nx.from_dict_of_lists(graph))
             edges = list(graph.edges())
             u, v = map(list, zip(*edges))
-            g = dgl_graph((u, v))
+            g = dgl_graph((u, v)) #TODO(ds4gnn): mark a useful interface
 
         onehot_labels = np.vstack((ally, ty))
         onehot_labels[test_idx_reorder, :] = onehot_labels[test_idx_range, :]

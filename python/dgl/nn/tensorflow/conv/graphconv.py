@@ -254,7 +254,7 @@ class GraphConv(layers.Layer):
                     feat_src = tf.matmul(feat_src, weight)
                 graph.srcdata['h'] = feat_src
                 graph.update_all(fn.copy_u(u='h', out='m'),
-                                 fn.sum(msg='m', out='h'))
+                                 fn.sum(msg='m', out='h')) #TODO(ds4gnn): invoked core.message_passing
                 rst = graph.dstdata['h']
             else:
                 # aggregate first then mult W

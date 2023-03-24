@@ -8,6 +8,7 @@ __all__ = ["DistDataLoader"]
 DATALOADER_ID = 0
 
 
+#TODO(ds4gnn): a general DistDataLoader
 class DistDataLoader:
     """DGL customized multiprocessing dataloader.
 

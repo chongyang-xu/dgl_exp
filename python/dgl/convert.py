@@ -1121,7 +1121,7 @@ def bipartite_from_scipy(sp_mat,
     if eweight_name is not None:
         g.edata[eweight_name] = F.tensor(sp_mat.data)
     return g.to(device)
-
+#TODO(ds4gnn): mark a converter
 def from_networkx(nx_graph,
                   node_attrs=None,
                   edge_attrs=None,

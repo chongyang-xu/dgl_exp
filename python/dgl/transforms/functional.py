@@ -3079,7 +3079,7 @@ def sort_csc_by_tag(g, tag, tag_offset_name='_TAG_OFFSET', tag_type='node'):
     new_g.dstdata[tag_offset_name] = F.from_dgl_nd(tag_pos_arr)
     return new_g
 
-
+#TODO(ds4gnn): mark for initial relabeling, uses cpu, data movement
 def reorder_graph(g, node_permute_algo=None, edge_permute_algo='src',
                   store_ids=True, permute_config=None):
     r"""Return a new graph with nodes and edges re-ordered/re-labeled
