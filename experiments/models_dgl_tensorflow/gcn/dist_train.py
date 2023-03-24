@@ -1,3 +1,4 @@
+from ogb.nodeproppred import NodePropPredDataset
 import argparse
 import time
 import json
@@ -74,7 +75,7 @@ def get_train_strategy(args):
     return train_strategy
 
 
-def load_dataset(args):
+def load_g(args):
     # load and preprocess dataset
     if args.dataset == "cora":
         dataset = CoraGraphDataset()
@@ -85,46 +86,66 @@ def load_dataset(args):
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))
 
-    train_mask = dataset[0].ndata["train_mask"]
-    val_mask = dataset[0].ndata["val_mask"]
-    test_mask = dataset[0].ndata["test_mask"]
-    n_classes = dataset.num_classes
-    print(
-        """----Data statistics------'
-    #Classes %d
-    #Train samples %d
-    #Val samples %d
-    #Test samples %d"""
-        % (
-            n_classes,
-            train_mask.numpy().sum(),
-            val_mask.numpy().sum(),
-            test_mask.numpy().sum(),
-        )
-    )
-    return dataset
-
-
-def main(args):
-    # set up parallel train strategy
-    train_strategy = get_train_strategy(args)
-
-    checkpoint_dir = os.path.join(util.get_temp_dir(), 'ckpt')
-
-#    train_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
-#    test_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
-
-    dataset = load_dataset(args)
     g = dataset[0]
+
     # add self loop
     if args.self_loop:
         g = dgl.remove_self_loop(g)
         g = dgl.add_self_loop(g)
 
-    in_feats = g.ndata["feat"].shape[1]
+    #labels = g.ndata["label"]
+    features = g.ndata["feat"]
+    train_mask = g.ndata["train_mask"]
+    val_mask = g.ndata["val_mask"]
+    test_mask = g.ndata["test_mask"]
+
+    in_feats = features.shape[1]
     n_classes = dataset.num_classes
 
-    def dataset_fn(input_context):
+    print(
+        """----Data statistics------'
+    #Classes %d
+    #Feature %d
+    #Train samples %d
+    #Val samples %d
+    #Test samples %d"""
+        % (
+            n_classes,
+            in_feats,
+            train_mask.numpy().sum(),
+            val_mask.numpy().sum(),
+            test_mask.numpy().sum(),
+        )
+    )
+    return g
+
+
+def load_dist_g(args):
+    # load preprocessed distGraph
+    if args.dataset == "ogb-pr":
+        p_config = "/workspace/compiling/chongyang_tmp/ogbn-products/1_part_data/ogbn-products.json"
+        g = dgl.distributed.DistGraph('ogbn-products', part_config=p_config)
+    elif args.dataset == "ogb-pa":
+        g = dgl.distributed.DistGraph('ogbn-papers100M')
+    elif args.dataset == "cora":
+        p_config = "/workspace/compiling/chongyang_tmp/cora/1_part_data/cora.json"
+        g = dgl.distributed.DistGraph('cora', part_config=p_config)
+    else:
+        raise ValueError("Unknown dataset: {}".format(args.dataset))
+
+    print("dataset={ds}, {field}:{detail}".format(
+        ds=args.dataset, field="label", detail=str(g.ndata["label"])))
+    print("dataset={ds}, {field}:{detail}".format(
+        ds=args.dataset, field="train_mask", detail=str(g.ndata["train_mask"])))
+    print("dataset={ds}, {field}:{detail}".format(
+        ds=args.dataset, field="val_mask", detail=str(g.ndata["val_mask"])))
+    print("dataset={ds}, {field}:{detail}".format(
+        ds=args.dataset, field="test_mask", detail=str(g.ndata["test_mask"])))
+    return g
+
+
+def get_dataset_fn_for_dist(g):
+    def fn(input_context):
         def input_gen():
             yield g.ndata["feat"], g.ndata["label"], g.ndata["train_mask"]
             yield g.ndata["feat"], g.ndata["label"], g.ndata["train_mask"]
@@ -140,26 +161,56 @@ def main(args):
         )
         #ds = ds.prefetch(2)
         return ds
+    return fn
 
-    multi_worker_dataset = train_strategy.distribute_datasets_from_function(
-        dataset_fn)
+
+def main(args):
+
+    dgl.distributed.initialize(ip_config='ip_config.txt')
+
+    # set up parallel train strategy
+    train_strategy = get_train_strategy(args)
+
+    checkpoint_dir = os.path.join(util.get_temp_dir(), 'ckpt')
+
+    dgl_dist_g = load_dist_g(args)
+    # prepare data for dist trainer
+    # train_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
+    # test_dist_dataset = train_strategy.experimental_distribute_dataset(dataset)
+
+    with tf.device("/cpu:0"):
+        train_nid = dgl.distributed.node_split(
+                dgl_dist_g.ndata['train_mask'], force_even=True)
+        sampler = dgl.dataloading.NeighborSampler([25, 10])
+        dist_train_dataloader = dgl.dataloading.DistNodeDataLoader(
+            dgl_dist_g, train_nid, sampler, batch_size=1024,shuffle=True, drop_last=False)
+
+    #valid_nid = dgl.distributed.node_split(g.ndata['val_mask'])
+    # valid_dataloader = dgl.dataloading.DistNodeDataLoader(
+    #                            g, valid_nid, sampler, batch_size=1024,
+    #                            shuffle=False, drop_last=False)
+
+    #dataset_fn = get_dataset_fn_for_dist(g)
+    # multi_worker_dataset = train_strategy.distribute_datasets_from_function(
+    #    dataset_fn)
 
     with train_strategy.scope():
         # create GCN model
         if args.model == 'gcn':
             model = GCN(
-                in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
+                args.in_feats, args.n_hidden, args.n_classes, args.n_layers, tf.nn.relu, args.dropout,)
         else:
             assert (args.model == 'sage')
             model = GraphSAGE(
-                in_feats, args.n_hidden, n_classes, args.n_layers, tf.nn.relu, args.dropout,)
+                args.in_feats, args.n_hidden, args.n_classes, args.n_layers, tf.nn.relu, args.dropout,)
 
         # use optimizer
         optimizer = tf.keras.optimizers.Adam(
             learning_rate=args.lr, epsilon=1e-8)
         train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
             name='train_accuracy')
-        g = g
+
+        g = dgl_dist_g
 
     @tf.function
     def val_step(iterator):
@@ -256,7 +307,13 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         default="cora",
-        help="Dataset name ('cora', 'citeseer', 'pubmed').",
+        help="Dataset name ('cora', 'citeseer', 'pubmed', 'ogb-pr', 'obg-pa').",
+    )
+    parser.add_argument(
+        "--n-classes", type=int, default=-1, required=True, help="number of classes in dataset"
+    )
+    parser.add_argument(
+        "--in-feats", type=int, default=-1, required=True, help="feature dimension in dataset"
     )
     parser.add_argument(
         "--model",
