@@ -10,6 +10,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 import dgl
 
+from gcn import GCN
+from graphsage import GraphSAGE
+from infer_dist import inference as dist_model_inference
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
@@ -42,7 +45,7 @@ def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device):
     """
     model.eval()
     with th.no_grad():
-        pred = model.inference(g, inputs, batch_size, device)
+        pred = model.dist_model_inference(g, inputs, batch_size, device)
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid]), compute_acc(
         pred[test_nid], labels[test_nid]
