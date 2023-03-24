@@ -37,3 +37,11 @@ class GCN(tf.keras.Model):
                 h = self.dropout(h)
             h = layer(g, h)
         return h
+
+#    def call(self, blocks, features):
+#        h = features
+#        for i, (layer, block) in enumerate(zip(self.layer_list, blocks)):
+#            if i != 0:
+#                h = self.dropout(h)
+#            h = layer(block, h)
+#        return h
