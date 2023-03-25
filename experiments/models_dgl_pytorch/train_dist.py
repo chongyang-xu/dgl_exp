@@ -10,8 +10,9 @@ import torch.optim as optim
 import dgl
 
 from gcn import GCN
-from graphsage import GraphSAGE
+from graphsage import SAGE as GraphSAGE
 from infer_dist import inference as dist_model_inference
+
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
@@ -44,7 +45,7 @@ def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device):
     """
     model.eval()
     with th.no_grad():
-        pred = model.dist_model_inference(g, inputs, batch_size, device)
+        pred = dist_model_inference(model, g, inputs, batch_size, device)
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid]), compute_acc(
         pred[test_nid], labels[test_nid]
@@ -68,14 +69,14 @@ def run(args, device, data):
         drop_last=False,
     )
     # Define model and optimizer
-    model = DistSAGE(
-        in_feats,
-        args.num_hidden,
-        n_classes,
-        args.num_layers,
-        F.relu,
-        args.dropout,
-    )
+    if args.model == 'sage':
+        model = GraphSAGE(in_feats, args.num_hidden, n_classes,
+                          args.num_layers, F.relu, args.dropout,)
+    else:
+        assert args.model == 'gcn'
+        model = GCN(in_feats, args.num_hidden, n_classes,
+                    args.num_layers, F.relu, args.dropout,)
+
     model = model.to(device)
     if not args.standalone:
         if args.num_gpus == -1:
@@ -298,6 +299,13 @@ if __name__ == "__main__":
         type=int,
         default=-1,
         help="the number of GPU device. Use -1 for CPU training",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="sage",
+        required=True,
+        help="gnn model in(sage, gcn)",
     )
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--num_hidden", type=int, default=16)
