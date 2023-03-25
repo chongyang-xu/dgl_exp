@@ -18,9 +18,9 @@ def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     Copys features and labels of a set of nodes onto GPU.
     """
     batch_inputs = (
-        g.ndata["features"][input_nodes].to(device) if load_feat else None
+        g.ndata["feat"][input_nodes].to(device) if load_feat else None
     )
-    batch_labels = g.ndata["labels"][seeds].to(device)
+    batch_labels = g.ndata["label"][seeds].to(device)
     return batch_inputs, batch_labels
 
 
@@ -182,8 +182,8 @@ def run(args, device, data):
             val_acc, test_acc = evaluate(
                 model if args.standalone else model.module,
                 g,
-                g.ndata["features"],
-                g.ndata["labels"],
+                g.ndata["feat"],
+                g.ndata["label"],
                 val_nid,
                 test_nid,
                 args.batch_size_eval,
@@ -261,13 +261,14 @@ def main(args):
         device = th.device("cuda:" + str(dev_id))
     n_classes = args.n_classes
     if n_classes == 0:
-        labels = g.ndata["labels"][np.arange(g.num_nodes())]
+        labels = g.ndata["label"][np.arange(g.num_nodes())]
         n_classes = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
         del labels
     print("#labels:", n_classes)
 
     # Pack data
-    in_feats = g.ndata["features"].shape[1]
+    #in_feats = g.ndata["features"].shape[1]
+    in_feats = g.ndata["feat"].shape[1]
     data = train_nid, val_nid, test_nid, in_feats, n_classes, g
     run(args, device, data)
     print("parent ends")
