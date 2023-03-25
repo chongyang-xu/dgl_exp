@@ -1,7 +1,6 @@
 import argparse
 import socket
 import time
-from contextlib import contextmanager
 
 import numpy as np
 import torch as th
@@ -277,7 +276,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GCN")
     parser.add_argument("--graph_name", type=str, help="graph name")
-    parser.add_argument("--id", type=int, help="the partition id")
+#    parser.add_argument("--id", type=int, help="the partition id")
     parser.add_argument(
         "--ip_config", type=str, help="The file for IP configuration"
     )
