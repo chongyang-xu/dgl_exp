@@ -8,6 +8,7 @@ References:
 
 import dgl.nn.pytorch as dglnn
 import torch.nn as nn
+from contextlib import contextmanager
 
 
 class GCN(nn.Module):
