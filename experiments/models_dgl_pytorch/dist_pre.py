@@ -41,7 +41,7 @@ def load_ogb(name, root_path):
 
 def main(args):
     data_root_path=args.data_root_path
-    ori_ds_path = data_root_path + "./ds_ori"
+    ori_ds_path = "{rt}/ds_ori".format(rt=data_root_path)
     print("DATA root is: {0}".format(ori_ds_path))
     if args.dataset == "ogbpr":
         ds_full_name = 'ogbn-products'
@@ -61,7 +61,7 @@ def main(args):
     print(dgl_g)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
-    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}/".format(
+    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}".format(
             root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo)
     part_config_path = "{out}/{ds}.json".format(out=part_out_path, ds=args.dataset)
     if not os.path.exists(part_out_path):
@@ -90,7 +90,7 @@ def main(args):
     else:
         # reference https://docs.dgl.ai/en/latest/guide/distributed-preprocessing.html#distributed-graph-partitioning-pipeline
         print("Test load dist graph...")
-        dgl.distributed.initialize('ip_config_1_mach.txt')
+        dgl.distributed.initialize("{pre_root}/clust_conf/config_1.txt".format(pre_root=pre_ds_root))
         g = dgl.distributed.DistGraph(
             args.dataset,
             part_config=part_config_path
@@ -110,6 +110,13 @@ if __name__ == "__main__":
         default="cora",
         required=True,
         help="Dataset name ('cora', 'ogb-pr', 'obg-pa').",
+    )
+    parser.add_argument(
+        "--data-root-path",
+        type=str,
+        default="DATA",
+        required=True,
+        help="relative path to root dir of DATA",
     )
     parser.add_argument(
         "--part-algo",
