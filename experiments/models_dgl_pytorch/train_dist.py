@@ -96,9 +96,12 @@ def run(args, device, data):
         tic = time.time()
 
         sample_time = 0
+        g_copy_time = 0  # graph struct copy time
+        f_copy_time = 0  # feature copy time
         forward_time = 0
         backward_time = 0
         update_time = 0
+        account_time = 0  # calculating time for log
         num_seeds = 0
         num_inputs = 0
         start = time.time()
@@ -114,6 +117,8 @@ def run(args, device, data):
                 batch_inputs, batch_labels = load_subtensor(
                     g, seeds, input_nodes, "cpu"
                 )
+                g_copy_end = time.time()
+                g_copy_time += g_copy_end - tic_step
                 batch_labels = batch_labels.long()
                 num_seeds += len(blocks[-1].dstdata[dgl.NID])
                 num_inputs += len(blocks[0].srcdata[dgl.NID])
@@ -121,21 +126,24 @@ def run(args, device, data):
                 blocks = [block.to(device) for block in blocks]
                 batch_inputs = batch_inputs.to(device)
                 batch_labels = batch_labels.to(device)
+                f_copy_end = time.time()
+                f_copy_time += f_copy_end - g_copy_end
                 # Compute loss and prediction
-                start = time.time()
+                #start = time.time()
                 batch_pred = model(blocks, batch_inputs)
                 loss = loss_fcn(batch_pred, batch_labels)
                 forward_end = time.time()
                 optimizer.zero_grad()
                 loss.backward()
                 compute_end = time.time()
-                forward_time += forward_end - start
+                forward_time += forward_end - f_copy_end
                 backward_time += compute_end - forward_end
 
                 optimizer.step()
-                update_time += time.time() - compute_end
+                update_end = time.time()
+                update_time += update_end - compute_end
 
-                step_t = time.time() - tic_step
+                step_t = update_end - tic_step
                 step_time.append(step_t)
                 iter_tput.append(len(blocks[-1].dstdata[dgl.NID]) / step_t)
                 if step % args.log_every == 0:
@@ -148,7 +156,7 @@ def run(args, device, data):
                     print(
                         "Part {} | Epoch {:05d} | Step {:05d} | Loss {:.4f} | "
                         "Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU "
-                        "{:.1f} MB | time {:.3f} s".format(
+                        "{:.1f} MB | time {:.3f} s\n".format(
                             g.rank(),
                             epoch,
                             step,
@@ -159,19 +167,23 @@ def run(args, device, data):
                             np.sum(step_time[-args.log_every:]),
                         )
                     )
-                start = time.time()
-
+                account_end = time.time()
+                account_time += account_end - update_end
+                start = account_end
         toc = time.time()
         print(
-            "Part {}, Epoch Time(s): {:.4f}, sample+data_copy: {:.4f}, "
-            "forward: {:.4f}, backward: {:.4f}, update: {:.4f}, #seeds: {}, "
-            "#inputs: {}".format(
+            "Part {}, Epoch Time(s): {:.4f}, sampling: {:.4f}, g_copy: {:.4f}, f_copy: {:.4f}, "
+            "forward: {:.4f}, backward: {:.4f}, update: {:.4f}, account: {:.4f}, #seeds: {}, "
+            "#inputs: {}\n".format(
                 g.rank(),
                 toc - tic,
                 sample_time,
+                g_copy_time,
+                f_copy_time,
                 forward_time,
                 backward_time,
                 update_time,
+                account_time,
                 num_seeds,
                 num_inputs,
             )
@@ -200,15 +212,24 @@ def run(args, device, data):
 
 def main(args):
     print(socket.gethostname(), "Initializing DGL dist")
+    t_b = time.time()
     dgl.distributed.initialize(args.ip_config, net_type=args.net_type)
+    print("local_rank={}, initialize TIME={:.4f} sec".format(
+        args.local_rank, time.time()-t_b))
     if not args.standalone:
         print(socket.gethostname(), "Initializing DGL process group")
+        t_b = time.time()
         th.distributed.init_process_group(backend=args.backend)
+        print("local_rank={}, init_process_group TIME={:.4f} sec".format(
+            args.local_rank, time.time()-t_b))
     print(socket.gethostname(), "Initializing DistGraph")
+    t_b = time.time()
     g = dgl.distributed.DistGraph(
         args.graph_name,
         part_config=args.part_config
     )
+    print("local_rank={}, g.dev={}, DistGraph TIME={:.4f} sec".format(
+        args.local_rank, g.device, time.time()-t_b))
     print(socket.gethostname(), "rank:", g.rank())
 
     pb = g.get_partition_book()
