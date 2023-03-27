@@ -5,7 +5,7 @@ import torch as th
 import tqdm
 
 
-def inference(model, g, x, batch_size, device):
+def inference(model, g, x, batch_size, device, stop_at_border=False):
     """
     Inference with the GraphSAGE model on full neighbors (i.e. without
     neighbor sampling).
@@ -21,10 +21,12 @@ def inference(model, g, x, batch_size, device):
     # layer by layer.  The nodes on each layer are of course splitted in
     # batches.
     # TODO: can we standardize this?
+
+    force_even_flg = False if stop_at_border else True
     nodes = dgl.distributed.node_split(
         np.arange(g.num_nodes()),
         g.get_partition_book(),
-        force_even=True,
+        force_even=force_even_flg,
     )
     y = dgl.distributed.DistTensor(
         (g.num_nodes(), model.n_hidden),
@@ -44,7 +46,10 @@ def inference(model, g, x, batch_size, device):
             f"|V|={g.num_nodes()}, eval batch size: {batch_size}"
         )
 
-        sampler = dgl.dataloading.NeighborSampler([-1])
+        sampler = dgl.dataloading.NeighborSampler(
+            [-1],
+            stop_at_border=stop_at_border
+        )
         dataloader = dgl.dataloading.DistNodeDataLoader(
             g,
             nodes,

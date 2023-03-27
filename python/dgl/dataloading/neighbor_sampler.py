@@ -109,7 +109,7 @@ class NeighborSampler(BlockSampler):
     """
     def __init__(self, fanouts, edge_dir='in', prob=None, mask=None, replace=False,
                  prefetch_node_feats=None, prefetch_labels=None, prefetch_edge_feats=None,
-                 output_device=None):
+                 output_device=None, stop_at_border=False):
         super().__init__(prefetch_node_feats=prefetch_node_feats,
                          prefetch_labels=prefetch_labels,
                          prefetch_edge_feats=prefetch_edge_feats,
@@ -123,15 +123,16 @@ class NeighborSampler(BlockSampler):
                     'to achieve the same goal.')
         self.prob = prob or mask
         self.replace = replace
+        self.stop_at_border = stop_at_border
 
-    def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+    def sample_blocks(self, g, seed_nodes, exclude_eids=None): #TODO(ds4gnn): sampler
         output_nodes = seed_nodes
         blocks = []
         for fanout in reversed(self.fanouts):
             frontier = g.sample_neighbors(
                 seed_nodes, fanout, edge_dir=self.edge_dir, prob=self.prob,
                 replace=self.replace, output_device=self.output_device,
-                exclude_edges=exclude_eids)
+                exclude_edges=exclude_eids, stop_at_border=self.stop_at_border)
             eid = frontier.edata[EID]
             block = to_block(frontier, seed_nodes)
             block.edata[EID] = eid

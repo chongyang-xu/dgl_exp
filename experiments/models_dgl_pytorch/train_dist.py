@@ -33,7 +33,7 @@ def compute_acc(pred, labels):
     return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 
-def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device):
+def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, stop_at_border):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -45,7 +45,7 @@ def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device):
     """
     model.eval()
     with th.no_grad():
-        pred = dist_model_inference(model, g, inputs, batch_size, device)
+        pred = dist_model_inference(model, g, inputs, batch_size, device, stop_at_border)
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid]), compute_acc(
         pred[test_nid], labels[test_nid]
@@ -58,7 +58,8 @@ def run(args, device, data):
     shuffle = True
     # prefetch_node_feats/prefetch_labels are not supported for DistGraph yet.
     sampler = dgl.dataloading.NeighborSampler(
-        [int(fanout) for fanout in args.fan_out.split(",")]
+        [int(fanout) for fanout in args.fan_out.split(",")],
+        stop_at_border=args.stop_at_border
     )
     dataloader = dgl.dataloading.DistNodeDataLoader(
         g,
@@ -201,6 +202,7 @@ def run(args, device, data):
                 test_nid,
                 args.batch_size_eval,
                 device,
+                args.stop_at_border,
             )
             print(
                 "Part {}, Val Acc {:.4f}, Test Acc {:.4f}, time: {:.4f}".format
@@ -228,39 +230,51 @@ def main(args):
         args.graph_name,
         part_config=args.part_config
     )
+    if args.stop_at_border:
+        print("=========================warning!===================")
+        print("===self loops are required on preprocess dataset====")
+        print("=========================warning!===================")
+
     print("local_rank={}, g.dev={}, DistGraph TIME={:.4f} sec".format(
         args.local_rank, g.device, time.time()-t_b))
     print(socket.gethostname(), "rank:", g.rank())
 
     pb = g.get_partition_book()
+    force_even_flg = False if args.stop_at_border else True
     if "trainer_id" in g.ndata:
         train_nid = dgl.distributed.node_split(
             g.ndata["train_mask"],
             pb,
-            force_even=True,
+            force_even=force_even_flg,
             node_trainer_ids=g.ndata["trainer_id"],
         )
         val_nid = dgl.distributed.node_split(
             g.ndata["val_mask"],
             pb,
-            force_even=True,
+            force_even=force_even_flg,
             node_trainer_ids=g.ndata["trainer_id"],
         )
         test_nid = dgl.distributed.node_split(
             g.ndata["test_mask"],
             pb,
-            force_even=True,
+            force_even=force_even_flg,
             node_trainer_ids=g.ndata["trainer_id"],
         )
     else:
+        # TODO(ds4gnn):is train_nid local to current partition?
+        # TODO(ds4gnn):
+        # force enven will divide all train nodes evenly across partitions,
+        # thus, a trainer might be asigned remote train node
+        # the idea of "sampling stop at border" don't want to handle remote sampling
+        # thus force_even is set to False
         train_nid = dgl.distributed.node_split(
-            g.ndata["train_mask"], pb, force_even=True
+            g.ndata["train_mask"], pb, force_even=force_even_flg
         )
         val_nid = dgl.distributed.node_split(
-            g.ndata["val_mask"], pb, force_even=True
+            g.ndata["val_mask"], pb, force_even=force_even_flg
         )
         test_nid = dgl.distributed.node_split(
-            g.ndata["test_mask"], pb, force_even=True
+            g.ndata["test_mask"], pb, force_even=force_even_flg
         )
     local_nid = pb.partid2nids(pb.partid).detach().numpy()
     print(
@@ -327,6 +341,9 @@ if __name__ == "__main__":
         default="sage",
         required=True,
         help="gnn model in(sage, gcn)",
+    )
+    parser.add_argument(
+        "--stop_at_border", action="store_true", default=False, help="sampler will stop at border"
     )
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--num_hidden", type=int, default=128)

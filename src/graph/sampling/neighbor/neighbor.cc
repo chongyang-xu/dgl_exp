@@ -560,7 +560,7 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
       CHECK(dir_str == "in" || dir_str == "out")
           << "Invalid edge direction. Must be \"in\" or \"out\".";
       EdgeDir dir = (dir_str == "in") ? EdgeDir::kIn : EdgeDir::kOut;
-
+      //TODO(ds4gnn): sampler
       std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
       *subg = sampling::SampleNeighbors(
           hg.sptr(), nodes, fanouts, dir, prob_or_mask, exclude_edges, replace);

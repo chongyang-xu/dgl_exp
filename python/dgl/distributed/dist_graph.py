@@ -1229,7 +1229,7 @@ class DistGraph:
 
     def sample_neighbors(self, seed_nodes, fanout, edge_dir='in', prob=None,
                          exclude_edges=None, replace=False, etype_sorted=True,
-                         output_device=None):
+                         output_device=None, stop_at_border=False):
         # pylint: disable=unused-argument
         """Sample neighbors from a distributed graph."""
         if len(self.etypes) > 1:
@@ -1238,7 +1238,7 @@ class DistGraph:
                 etype_sorted=etype_sorted, prob=prob)
         else:
             frontier = graph_services.sample_neighbors(
-                self, seed_nodes, fanout, replace=replace, prob=prob)
+                self, seed_nodes, fanout, replace=replace, prob=prob, stop_at_border=stop_at_border) #(ds4gnn): sampler
         return frontier
 
     def _get_ndata_names(self, ntype=None):

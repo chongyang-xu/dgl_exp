@@ -462,7 +462,7 @@ LocalSampledGraph = namedtuple(
 )
 
 
-def _distributed_access(g, nodes, issue_remote_req, local_access):
+def _distributed_access(g, nodes, issue_remote_req, local_access, stop_at_border=False):
     """A routine that fetches local neighborhood of nodes from the distributed graph.
 
     The local neighborhood of some nodes are stored in the local machine and the other
@@ -491,11 +491,12 @@ def _distributed_access(g, nodes, issue_remote_req, local_access):
     partition_book = g.get_partition_book()
     nodes = toindex(nodes).tousertensor()
     partition_id = partition_book.nid2partid(nodes)
-    local_nids = None
+    local_nids = None  # TODO(ds4gnn) are global ids of local nodes
     for pid in range(partition_book.num_partitions()):
         assert F.context(nodes) == g.device
         node_id = F.boolean_mask(nodes, partition_id == pid)
-        assert F.context(node_id) == g.device #TODO(ds4gnn): BUG? assert failed when call from exp:tf:gcn:dist_train.py
+        # TODO(ds4gnn): BUG? assert failed when call from exp:tf:gcn:dist_train.py
+        assert F.context(node_id) == g.device
         # We optimize the sampling on a local partition if the server and the client
         # run on the same machine. With a good partitioning, most of the seed nodes
         # should reside in the local partition. If the server and the client
@@ -504,11 +505,16 @@ def _distributed_access(g, nodes, issue_remote_req, local_access):
             assert local_nids is None
             local_nids = node_id
         elif len(node_id) != 0:
-            req = issue_remote_req(node_id)
-            req_list.append((pid, req))
+            # TODO(ds4gnn): node_id are remote nodes
+            # when stop_at_border is on,  discard these nodes instead of accessing them remotely
+            if not stop_at_border:
+                req = issue_remote_req(node_id)
+                req_list.append((pid, req))
 
     # send requests to the remote machine.
     msgseq2pos = None
+    if stop_at_border:
+        assert len(req_list) == 0
     if len(req_list) > 0:
         msgseq2pos = send_requests_to_machine(req_list)
 
@@ -721,7 +727,7 @@ def sample_etype_neighbors(
         return frontier
 
 
-def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False):
+def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False, stop_at_border=False):
     """Sample from the neighbors of the given nodes from a distributed graph.
 
     For each node, a number of inbound (or outbound when ``edge_dir == 'out'``) edges
@@ -797,6 +803,7 @@ def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False):
         return SamplingRequest(
             node_ids, fanout, edge_dir=edge_dir, prob=_prob, replace=replace
         )
+    # TODO(ds4gnn): use dgl.samping.neighbor.sample_neighbors
 
     def local_access(local_g, partition_book, local_nids):
         # See NOTE 1
@@ -813,7 +820,9 @@ def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False):
             replace,
         )
 
-    frontier = _distributed_access(g, nodes, issue_remote_req, local_access)
+    # TODO(ds4gnn): sampler
+    frontier = _distributed_access(
+        g, nodes, issue_remote_req, local_access, stop_at_border)
     if not gpb.is_homogeneous:
         return _frontier_to_heterogeneous_graph(g, frontier, gpb)
     else:
@@ -989,7 +998,8 @@ def _distributed_get_node_property(g, n, issue_remote_req, local_access):
     # handle edges in local partition.
     vals = None
     if local_nids is not None:
-        local_vals = local_access(g.local_partition, partition_book, local_nids)
+        local_vals = local_access(
+            g.local_partition, partition_book, local_nids)
         shape = list(F.shape(local_vals))
         shape[0] = len(n)
         vals = F.zeros(shape, F.dtype(local_vals), F.cpu())

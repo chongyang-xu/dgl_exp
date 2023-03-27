@@ -199,7 +199,7 @@ class NodeCollator(Collator):
             items = utils.group_as_dict(items)
         items = utils.prepare_tensor_or_dict(self.g, items, 'items')
 
-        input_nodes, output_nodes, blocks = self.graph_sampler.sample_blocks(self.g, items)
+        input_nodes, output_nodes, blocks = self.graph_sampler.sample_blocks(self.g, items) #TODO(ds4gnn): sampler
 
         return input_nodes, output_nodes, blocks
 
