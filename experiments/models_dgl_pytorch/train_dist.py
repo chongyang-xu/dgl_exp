@@ -308,9 +308,9 @@ if __name__ == "__main__":
         help="gnn model in(sage, gcn)",
     )
     parser.add_argument("--num_epochs", type=int, default=20)
-    parser.add_argument("--num_hidden", type=int, default=16)
-    parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--fan_out", type=str, default="10,25")
+    parser.add_argument("--num_hidden", type=int, default=128)
+    parser.add_argument("--num_layers", type=int, default=3)
+    parser.add_argument("--fan_out", type=str, default="15,10,5")
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--batch_size_eval", type=int, default=100000)
     parser.add_argument("--log_every", type=int, default=20)
