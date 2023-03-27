@@ -58,7 +58,12 @@ def main(args):
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))
 
+    if args.self_loop:
+        dgl_g = dgl.remove_self_loop(dgl_g)
+        dgl_g = dgl.add_self_loop(dgl_g)
+
     print(dgl_g)
+
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
     part_out_path = "{root}/{ds}/data_part_n{num}_{algo}".format(
@@ -138,6 +143,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="use distributed partition for big graph (default=False)",
+    )
+    parser.add_argument(
+        "--self-loop",
+        action="store_false",
+        default=True,
+        help="add self loop to graph (default=False)",
     )
 
     args = parser.parse_args()
