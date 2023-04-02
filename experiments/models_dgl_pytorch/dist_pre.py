@@ -148,7 +148,7 @@ if __name__ == "__main__":
         "--self-loop",
         action="store_false",
         default=True,
-        help="add self loop to graph (default=False)",
+        help="add self loop to graph (default=True)",
     )
 
     args = parser.parse_args()
