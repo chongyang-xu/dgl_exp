@@ -21,6 +21,9 @@ class GCN(nn.Module):
                  dropout):
         super(GCN, self).__init__()
         self.layers = nn.ModuleList()
+        self.n_layers = n_layers
+        self.n_hidden = n_hidden
+        self.n_classes = n_classes
         # input layer
         self.layers.append(
             dglnn.GraphConv(in_feats, n_hidden, activation=activation, allow_zero_in_degree=True))
@@ -32,6 +35,7 @@ class GCN(nn.Module):
         self.layers.append(
             dglnn.GraphConv(n_hidden, n_classes, allow_zero_in_degree=True))
         self.dropout = nn.Dropout(p=dropout)
+        self.activation = activation
 
     def forward(self, blocks, features):
         h = features
