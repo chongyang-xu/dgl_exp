@@ -43,6 +43,7 @@ def _init_rpc(
     role,
     num_threads,
     group_id,
+    disable_backup_server=False
 ):
     """This init function is called in the worker processes."""
     try:
@@ -52,7 +53,7 @@ def _init_rpc(
                 ip_config, num_servers, max_queue_size, net_type, group_id
             )
         init_role(role)
-        init_kvstore(ip_config, num_servers, role)
+        init_kvstore(ip_config, num_servers, role, disable_backup_server)
     except Exception as e:
         print(e, flush=True)
         traceback.print_exc()
@@ -213,6 +214,7 @@ def initialize(
     max_queue_size=MAX_QUEUE_SIZE,
     net_type="socket",
     num_worker_threads=1,
+    disable_backup_server=False
 ):
     """Initialize DGL's distributed module
 
@@ -266,7 +268,7 @@ def initialize(
         rpc.reset()
         keep_alive = bool(int(os.environ.get("DGL_KEEP_ALIVE", 0)))
         serv = DistGraphServer(
-            int(os.environ.get("DGL_SERVER_ID")),
+            int(os.environ.get("DGL_SERVER_ID")), #TODO(ds4gnn) DGL_SERVER_ID is local id in a machine
             os.environ.get("DGL_IP_CONFIG"),
             int(os.environ.get("DGL_NUM_SERVER")),
             int(os.environ.get("DGL_NUM_CLIENT")),
@@ -274,6 +276,7 @@ def initialize(
             graph_format=formats,
             keep_alive=keep_alive,
             net_type=net_type,
+            disable_backup_server=disable_backup_server
         )
         serv.start()
         sys.exit()
@@ -298,6 +301,7 @@ def initialize(
                     "sampler",
                     num_worker_threads,
                     group_id,
+                    disable_backup_server,
                 ),
             )
         else:
@@ -315,7 +319,7 @@ def initialize(
                 group_id=group_id,
             )
         init_role("default")
-        init_kvstore(ip_config, num_servers, "default")
+        init_kvstore(ip_config, num_servers, "default", disable_backup_server)
 
 
 def finalize_client():

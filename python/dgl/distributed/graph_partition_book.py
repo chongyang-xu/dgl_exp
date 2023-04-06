@@ -1153,14 +1153,14 @@ class HeteroDataName(object):
         The name of the data.
     """
 
-    def __init__(self, is_node, entity_type, data_name):
+    def __init__(self, is_node, entity_type, data_name, disable_backup_server=False, machine_name="<invalid>"):
         self._policy = NODE_PART_POLICY if is_node else EDGE_PART_POLICY
         if not is_node:
             assert isinstance(entity_type, tuple) and len(entity_type) == 3, \
                 "Expect canonical edge type in a triplet of string, but got " \
                 f"{entity_type}."
         self._entity_type = entity_type
-        self.data_name = data_name
+        self.data_name = machine_name if disable_backup_server else data_name
 
     @property
     def policy_str(self):

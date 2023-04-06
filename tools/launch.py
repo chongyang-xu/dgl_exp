@@ -616,7 +616,7 @@ def submit_jobs(args, udf_command, dry_run=False):
     # The number of partitions must match the number of machines in the cluster.
     assert part_metadata["num_parts"] == len(
         hosts
-    ), "The number of graph partitions has to match the number of machines in the cluster."
+    ) * args.num_servers , "The number of graph partitions has to match the number of machines in the cluster."
 
     state_q = queue.Queue()
     tot_num_clients = args.num_trainers * (1 + args.num_samplers) * len(hosts)

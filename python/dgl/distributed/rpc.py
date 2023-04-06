@@ -52,6 +52,11 @@ SERVICE_ID_TO_PROPERTY = {}
 
 DEFUALT_PORT = 30050
 
+rpc_disable_backup_server = False
+
+def set_disable_backup_server(flag):
+    global rpc_disable_backup_server
+    rpc_disable_backup_server = flag
 
 def read_ip_config(filename, num_servers):
     """Read network configuration information of server from file.
@@ -946,10 +951,14 @@ def send_requests_to_machine(target_and_requests):
         msg_seq = incr_msg_seq()
         client_id = get_rank()
 
-        server_id = random.randint(
-            target * get_num_server_per_machine(),
-            (target + 1) * get_num_server_per_machine() - 1,
-        )
+        if rpc_disable_backup_server:
+            server_id = target
+        else:
+            server_id = random.randint(
+                target * get_num_server_per_machine(),
+                (target + 1) * get_num_server_per_machine() - 1,
+            )
+
         data, tensors = serialize_to_payload(request)
         msg = RPCMessage(
             service_id,

@@ -57,6 +57,12 @@ class PullRequest(rpc.Request):
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
+
+        if kv_store.disable_backup_server:
+            n_name, n_part = kv_store.name_rm_part(self.name)
+            assert n_part != kv_store._part_id
+            self.name = kv_store.name_on_machine(n_name)
+
         if self.name not in kv_store.part_policy:
             raise RuntimeError("KVServer cannot find partition policy with name: %s" % self.name)
         if self.name not in kv_store.data_store:
@@ -95,6 +101,12 @@ class PushRequest(rpc.Request):
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
+
+        if kv_store.disable_backup_server:
+            n_name, n_part = kv_store.name_rm_part(self.name)
+            assert n_part != kv_store._part_id
+            self.name = kv_store.name_on_machine(n_name)
+
         if self.name not in kv_store.part_policy:
             raise RuntimeError("KVServer cannot find partition policy with name: %s" % self.name)
         if self.name not in kv_store.data_store:
@@ -416,6 +428,10 @@ class GetPartShapeRequest(rpc.Request):
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
+        # NOTE(ds4gnn): self.name has no part_id info
+        if kv_store.disable_backup_server:
+            self.name = kv_store.name_on_machine(self.name)
+
         if self.name not in kv_store.data_store:
             raise RuntimeError("KVServer Cannot find data tensor with name: %s" % self.name)
         data_shape = F.shape(kv_store.data_store[self.name])
@@ -475,6 +491,10 @@ class SendMetaToBackupRequest(rpc.Request):
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
+        if kv_store.disable_backup_server:
+            assert False
+
+        kv_store = server_state.kv_store
         assert kv_store.is_backup_server()
         if self.name not in kv_store.data_store:
             shared_data = empty_shared_mem(self.name+'-kvdata-', False, self.shape, self.dtype)
@@ -527,6 +547,11 @@ class DeleteDataRequest(rpc.Request):
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
+
+        if kv_store.disable_backup_server:
+            n_name, n_part = kv_store.name_rm_part(self.name)
+            assert n_part == kv_store._part_id
+
         if self.name in kv_store.data_store:
             del kv_store.data_store[self.name]
             del kv_store.part_policy[self.name]
@@ -567,6 +592,11 @@ class CountLocalNonzeroRequest(rpc.Request):
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
+        if kv_store.disable_backup_server:
+            n_name, n_part = kv_store.name_rm_part(self.name)
+            assert n_part != kv_store._part_id
+            self.name = kv_store.name_on_machine(n_name)
+
         num_local_nonzero = kv_store.count_local_nonzero(self.name)
         res = CountLocalNonzeroResponse(num_local_nonzero)
         return res
@@ -636,7 +666,8 @@ class KVServer(object):
     num_clients : int
         Total number of KVClients that will be connected to the KVServer.
     """
-    def __init__(self, server_id, ip_config, num_servers, num_clients):
+
+    def __init__(self, server_id, ip_config, num_servers, num_clients, disable_backup_server):
         assert server_id >= 0, 'server_id (%d) cannot be a negative number.' % server_id
         assert num_servers > 0, 'num_servers (%d) must be a positive number.' % num_servers
         assert os.path.exists(ip_config), 'Cannot open file: %s' % ip_config
@@ -690,13 +721,29 @@ class KVServer(object):
                     server_id, len(self._server_namebook))
         self._machine_id = self._server_namebook[server_id][0]
         self._group_count = self._server_namebook[server_id][3]
-        # We assume partition_id is equal to machine_id
-        self._part_id = self._machine_id
+        # NOTE(ds4gnn): dgl assumes 1 machine has 1 partition,
+        # with disable_backup_server flag,  1 machine can have >1 partitions, 1 server is mapped with 1 partition
+        self.disable_backup_server = disable_backup_server
+        if disable_backup_server:
+            self._part_id = self._machine_id * self._group_count + self._server_id
+        else:
+            self._part_id = self._machine_id
         self._num_clients = num_clients
         self._barrier_count = {}
         # push and pull handler
         self._push_handlers = {}
         self._pull_handlers = {}
+
+    def name_on_machine(self, name):
+        if self.disable_backup_server:
+            return "{}-part{}".format(name, self._part_id)
+        else:
+            return "<invalid>"
+
+    def name_rm_part(self, name):
+        idx = name.find("-part")
+        assert idx > 0
+        return name[0:idx], int(name[idx+len("-part"):])
 
     @property
     def server_id(self):
@@ -751,6 +798,8 @@ class KVServer(object):
     def is_backup_server(self):
         """Return True if current server is a backup server.
         """
+        if self.disable_backup_server:
+            return False
         if self._server_id % self._group_count == 0:
             return False
         return True
@@ -781,6 +830,12 @@ class KVServer(object):
         assert len(name) > 0, 'name cannot be empty.'
         if name in self._data_store:
             raise RuntimeError("Data %s has already exists!" % name)
+
+        if self.disable_backup_server:
+            # NOTE(ds4gnn): kvserver assume init_data caller handle naming
+            _, n_part = self.name_rm_part(name)
+            assert n_part == self._part_id
+
         self._part_policy[name] = self.find_policy(policy_str)
         if data_tensor is not None: # Create shared-tensor
             data_type = F.reverse_data_type_dict[F.dtype(data_tensor)]
@@ -849,7 +904,7 @@ class KVClient(object):
     role : str
         We can set different role for kvstore.
     """
-    def __init__(self, ip_config, num_servers, role='default'):
+    def __init__(self, ip_config, num_servers, role='default', disable_backup_server=False):
         assert rpc.get_rank() != -1, \
                 'Please invoke rpc.connect_to_server() before creating KVClient.'
         assert os.path.exists(ip_config), 'Cannot open file: %s' % ip_config
@@ -888,6 +943,8 @@ class KVClient(object):
         rpc.register_service(COUNT_LOCAL_NONZERO,
                              CountLocalNonzeroRequest,
                              CountLocalNonzeroResponse)
+        rpc.set_disable_backup_server(disable_backup_server)
+
         # Store the tensor data with specified data name
         self._data_store = {}
         # Store the partition information with specified data name
@@ -907,13 +964,31 @@ class KVClient(object):
         self._machine_count = int(self._server_count / self._group_count)
         self._client_id = rpc.get_rank()
         self._machine_id = rpc.get_machine_id()
-        self._part_id = self._machine_id
-        self._main_server_id = self._machine_id * self._group_count
+        self.disable_backup_server = disable_backup_server
+        if disable_backup_server:
+            # NOTE(ds4gnn): client to partition mapping when disable_backup_server
+            assert rpc.get_num_client() == self._group_count
+            self._main_server_id = self._machine_id * self._group_count + self._client_id % self._group_count
+            self._part_id = self._main_server_id
+        else:
+            self._part_id = self._machine_id
+            self._main_server_id = self._machine_id * self._group_count
         # push and pull handler
         self._pull_handlers = {}
         self._push_handlers = {}
         # register role on server-0
         self._role = role
+
+    def name_on_machine(self, name):
+        if self.disable_backup_server:
+            return "{}-part{}".format(name, self._part_id)
+        else:
+            return "<invalid>"
+
+    def name_rm_part(self, name):
+        idx = name.find("-part")
+        assert idx > 0
+        return name[0:idx], int(name[idx+len("-part"):])
 
     @property
     def all_possible_part_policy(self):
@@ -971,6 +1046,8 @@ class KVClient(object):
         func : callable
             The function to be called.
         """
+        if self.disable_backup_server:
+            assert False
         self.barrier()
         request = RegisterPushHandlerRequest(name, func)
         # send request to all the server nodes
@@ -1003,6 +1080,8 @@ class KVClient(object):
         func : callable
             The function to be called.
         """
+        if self.disable_backup_server:
+            assert False
         self.barrier()
         request = RegisterPullHandlerRequest(name, func)
         # send request to all the server nodes
@@ -1036,6 +1115,10 @@ class KVClient(object):
         """
         assert len(name) > 0, 'name cannot be empty.'
         assert len(shape) > 0, 'shape cannot be empty'
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+
         assert name not in self._data_name_list, 'data name: %s already exists.' % name
         self.barrier()
         shape = list(shape)
@@ -1049,11 +1132,17 @@ class KVClient(object):
                                   F.reverse_data_type_dict[dtype],
                                   part_policy.policy_str,
                                   init_func)
-        # The request is sent to the servers in one group, which are on the same machine.
-        for n in range(self._group_count):
-            server_id = part_policy.part_id * self._group_count + n
+        if not self.disable_backup_server:
+            # The request is sent to the servers in one group, which are on the same machine.
+            for n in range(self._group_count):
+                server_id = part_policy.part_id * self._group_count + n
+                rpc.send_request(server_id, request)
+            for _ in range(self._group_count):
+                response = rpc.recv_response()
+                assert response.msg == INIT_MSG
+        else:
+            server_id = part_policy.part_id
             rpc.send_request(server_id, request)
-        for _ in range(self._group_count):
             response = rpc.recv_response()
             assert response.msg == INIT_MSG
 
@@ -1085,6 +1174,10 @@ class KVClient(object):
                                           part_shape, part_policy.policy_str,
                                           self._pull_handlers[name],
                                           self._push_handlers[name])
+        if self.disable_backup_server:
+            self.barrier()
+            return
+
         # send request to all the backup server nodes
         for i in range(self._group_count-1):
             server_id = self._machine_id * self._group_count + i + 1
@@ -1104,16 +1197,27 @@ class KVClient(object):
             data name
         """
         assert len(name) > 0, 'name cannot be empty.'
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+
         assert name in self._data_name_list, 'data name: %s not exists.' % name
         self.barrier()
         part_policy = self._part_policy[name]
 
         # send request to every server nodes
         request = DeleteDataRequest(name)
-        for n in range(self._group_count):
-            server_id = part_policy.part_id * self._group_count + n
+        if not self.disable_backup_server:
+            for n in range(self._group_count):
+                #TODO(ds4gnn): part_id
+                server_id = part_policy.part_id * self._group_count + n
+                rpc.send_request(server_id, request)
+            for _ in range(self._group_count):
+                response = rpc.recv_response()
+                assert response.msg == DELETE_MSG
+        else:
+            server_id = part_policy.part_id
             rpc.send_request(server_id, request)
-        for _ in range(self._group_count):
             response = rpc.recv_response()
             assert response.msg == DELETE_MSG
 
@@ -1129,6 +1233,7 @@ class KVClient(object):
         del self._push_handlers[name]
         self.barrier()
 
+    #TODO(ds4gnn): main parts
     def map_shared_data(self, partition_book):
         """Mapping shared-memory tensor from server to client.
 
@@ -1151,6 +1256,9 @@ class KVClient(object):
         rpc.send_request(self._main_server_id, request)
         response = rpc.recv_response()
         for name, meta in response.meta.items():
+            if self.disable_backup_server:
+                _, n_part = self.name_rm_part(name)
+                assert n_part == self._part_id
             if name not in self._data_name_list:
                 shape, dtype, policy_str = meta
                 assert policy_str in self._all_possible_part_policy
@@ -1160,22 +1268,56 @@ class KVClient(object):
                 self._part_policy[name] = self._all_possible_part_policy[policy_str]
                 self._pull_handlers[name] = default_pull_handler
                 self._push_handlers[name] = default_push_handler
+
         # Get full data shape across servers
-        for name, meta in response.meta.items():
-            if name not in self._data_name_list:
-                shape, _, _ = meta
-                data_shape = list(shape)
-                data_shape[0] = 0
-                request = GetPartShapeRequest(name)
-                # send request to all main server nodes
-                for machine_id in range(self._machine_count):
-                    server_id = machine_id * self._group_count
-                    rpc.send_request(server_id, request)
-                # recv response from all the main server nodes
-                for _ in range(self._machine_count):
-                    res = rpc.recv_response()
-                    data_shape[0] += res.shape[0]
-                self._full_data_shape[name] = tuple(data_shape)
+        if self.disable_backup_server:
+            for name, meta in response.meta.items():
+                req_name, n_part = self.name_rm_part(name)
+                assert n_part == self._part_id
+                if name not in self._data_name_list:
+                    shape, _, _ = meta
+                    data_shape = list(shape)
+                    data_shape[0] = 0
+                    request = GetPartShapeRequest(req_name)
+                    # send request to all main server nodes
+                    for s_id in range(self._server_count):
+                        rpc.send_request(s_id, request)
+                    # recv response from all the main server nodes
+                    for _ in range(self._server_count):
+                        res = rpc.recv_response()
+                        data_shape[0] += res.shape[0]
+                    self._full_data_shape[name] = tuple(data_shape)
+        else:
+            for name, meta in response.meta.items():
+                if name not in self._data_name_list:
+                    shape, _, _ = meta
+                    data_shape = list(shape)
+                    data_shape[0] = 0
+                    request = GetPartShapeRequest(name)
+                    # send request to all main server nodes
+                    for machine_id in range(self._machine_count):
+                        server_id = machine_id * self._group_count
+                        rpc.send_request(server_id, request)
+                    # recv response from all the main server nodes
+                    for _ in range(self._machine_count):
+                        res = rpc.recv_response()
+                        data_shape[0] += res.shape[0]
+                    self._full_data_shape[name] = tuple(data_shape)
+
+        if self.disable_backup_server:
+            for name, meta in response.meta.items():
+                if name not in self._data_name_list:
+                    assert name not in self._gdata_name_list
+                    self._data_name_list.add(name)
+                    # map_shared_data happens only at DistGraph initialization
+                    # TODO(xiangsx): We assume there is no non-graph data initialized at this time
+                    self._gdata_name_list.add(name)
+                else:
+                    assert name in self._gdata_name_list
+            self.barrier()
+            # no need to send meta data to backup servers when disable_backup_server
+            return
+
         # Send meta data to backup servers
         for name, meta in response.meta.items():
             shape, dtype, policy_str = meta
@@ -1198,16 +1340,34 @@ class KVClient(object):
 
     def gdata_name_list(self):
         """Get all the graph data name"""
-        return list(self._gdata_name_list)
+        if self.disable_backup_server:
+            res = set()
+            for e in self._gdata_name_list:
+                res.add(self.name_rm_part(e)[0])
+            assert len(res) == len(self._gdata_name_list)
+            return list(res)
+        else:
+            return list(self._gdata_name_list)
 
     def data_name_list(self):
         """Get all the data name"""
-        return list(self._data_name_list)
+        if self.disable_backup_server:
+            res = set()
+            for e in self._data_name_list:
+                res.add(self.name_rm_part(e)[0])
+            assert len(res) == len(self._data_name_list)
+            return list(res)
+        else:
+            return list(self._data_name_list)
 
     def get_data_meta(self, name):
         """Get meta data (data_type, data_shape, partition_policy)
         """
         assert len(name) > 0, 'name cannot be empty.'
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+
         data_type = F.dtype(self._data_store[name])
         data_shape = self._full_data_shape[name]
         part_policy = self._part_policy[name]
@@ -1223,6 +1383,10 @@ class KVClient(object):
             a vector storing the global data ID
         """
         assert len(name) > 0, 'name cannot be empty.'
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+
         id_tensor = utils.toindex(id_tensor)
         id_tensor = id_tensor.tousertensor()
         assert F.ndim(id_tensor) == 1, 'ID must be a vector.'
@@ -1230,7 +1394,6 @@ class KVClient(object):
         machine_id = self._part_policy[name].to_partid(id_tensor)
 
         return machine_id
-
 
     def push(self, name, id_tensor, data_tensor):
         """Push data to KVServer.
@@ -1247,12 +1410,18 @@ class KVClient(object):
             a tensor with the same row size of data ID
         """
         assert len(name) > 0, 'name cannot be empty.'
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+
         id_tensor = utils.toindex(id_tensor)
         id_tensor = id_tensor.tousertensor()
         assert F.ndim(id_tensor) == 1, 'ID must be a vector.'
         assert F.shape(id_tensor)[0] == F.shape(data_tensor)[0], \
         'The data must has the same row size with ID.'
+
         # partition data
+        #NOTE(ds4gnn): machine_idx is partition id, is server id when disable_backup_server
         machine_id = self._part_policy[name].to_partid(id_tensor)
         # sort index by machine id
         sorted_id = F.tensor(np.argsort(F.asnumpy(machine_id)))
@@ -1269,14 +1438,20 @@ class KVClient(object):
                 continue
             partial_id = id_tensor[start:end]
             partial_data = data_tensor[start:end]
-            if machine_idx == self._machine_id: # local push
+            # NOTE(ds4gnn): when disable_backup_server, machine_idx is reused as part_id, thus should match server has the partition
+            match_idx = self._machine_id if not self.disable_backup_server else self._main_server_id
+            if machine_idx == match_idx: # local push
                 # Note that DO NOT push local data right now because we can overlap
                 # communication-local_push here
                 local_id = self._part_policy[name].to_local(partial_id)
                 local_data = partial_data
             else: # push data to remote server
                 request = PushRequest(name, partial_id, partial_data)
-                rpc.send_request_to_machine(machine_idx, request)
+                if self.disable_backup_server:
+                    #NOTE(ds4gnn): machine_idx is partition id, is server id when disable_backup_server
+                    rpc.send_request(machine_idx, request)
+                else:
+                    rpc.send_request_to_machine(machine_idx, request)
             start += count[idx]
         if local_id is not None: # local push
             self._push_handlers[name](self._data_store, name, local_id, local_data)
@@ -1297,10 +1472,17 @@ class KVClient(object):
             a data tensor with the same row size of id_tensor.
         """
         assert len(name) > 0, 'name cannot be empty.'
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+
         id_tensor = utils.toindex(id_tensor)
         id_tensor = id_tensor.tousertensor()
         assert F.ndim(id_tensor) == 1, 'ID must be a vector.'
-        if self._pull_handlers[name] is default_pull_handler: # Use fast-pull
+
+        #TODO(ds4gnn): fast_pull not work when disable_backup_server
+        fast_pull_branch = False if self.disable_backup_server else True
+        if fast_pull_branch and self._pull_handlers[name] is default_pull_handler: # Use fast-pull
             part_id = self._part_policy[name].to_partid(id_tensor)
             return rpc.fast_pull(name, id_tensor, part_id, KVSTORE_PULL,
                                  self._machine_count,
@@ -1326,13 +1508,18 @@ class KVClient(object):
                 if start == end: # No data for target machine
                     continue
                 partial_id = id_tensor[start:end]
-                if machine_idx == self._machine_id: # local pull
+                # NOTE(ds4gnn): when disable_backup_server, machine_idx is reused as part_id, thus should match server has the partition
+                match_idx = self._machine_id if not self.disable_backup_server else self._main_server_id
+                if machine_idx == match_idx: # local pull
                     # Note that DO NOT pull local data right now because we can overlap
                     # communication-local_pull here
                     local_id = self._part_policy[name].to_local(partial_id)
                 else: # pull data from remote server
                     request = PullRequest(name, partial_id)
-                    rpc.send_request_to_machine(machine_idx, request)
+                    if self.disable_backup_server:
+                        rpc.send_request(machine_idx, request)
+                    else:
+                        rpc.send_request_to_machine(machine_idx, request)
                     pull_count += 1
                 start += count[idx]
             # recv response
@@ -1354,6 +1541,11 @@ class KVClient(object):
     def union(self, operand1_name, operand2_name, output_name):
         """Compute the union of two mask arrays in the KVStore.
         """
+        if self.disable_backup_server:
+            operand1_name = self.name_on_machine(operand1_name)
+            operand2_name = self.name_on_machine(operand2_name)
+            output_name = self.name_on_machine(output_name)
+
         # Each trainer computes its own result from its local storage.
         self._data_store[output_name][:] = (
                 self._data_store[operand1_name] |
@@ -1378,20 +1570,37 @@ class KVClient(object):
         int
             the number of nonzero in this data.
         """
+
         total = 0
         pull_count = 0
-        for machine_id in range(self._machine_count):
-            if machine_id == self._machine_id:
-                local_id = F.tensor(np.arange(self._part_policy[name].get_part_size(),
-                                              dtype=np.int64))
-                total += F.count_nonzero(self._data_store[name][local_id])
-            else:
-                request = CountLocalNonzeroRequest(name)
-                rpc.send_request_to_machine(machine_id, request)
-                pull_count += 1
-        for _ in range(pull_count):
-            res = rpc.recv_response()
-            total += res.num_local_nonzero
+
+        if self.disable_backup_server:
+            name = self.name_on_machine(name)
+            for s_id in range(self._server_count):
+                if s_id == self._part_id:
+                    local_id = F.tensor(np.arange(self._part_policy[name].get_part_size(),
+                                                dtype=np.int64))
+                    total += F.count_nonzero(self._data_store[name][local_id])
+                else:
+                    request = CountLocalNonzeroRequest(name)
+                    rpc.send_request(s_id, request)
+                    pull_count += 1
+            for _ in range(pull_count):
+                res = rpc.recv_response()
+                total += res.num_local_nonzero
+        else:
+            for machine_id in range(self._machine_count):
+                if machine_id == self._machine_id:
+                    local_id = F.tensor(np.arange(self._part_policy[name].get_part_size(),
+                                                dtype=np.int64))
+                    total += F.count_nonzero(self._data_store[name][local_id])
+                else:
+                    request = CountLocalNonzeroRequest(name)
+                    rpc.send_request_to_machine(machine_id, request)
+                    pull_count += 1
+            for _ in range(pull_count):
+                res = rpc.recv_response()
+                total += res.num_local_nonzero
         return total
 
     @property
@@ -1407,14 +1616,14 @@ class KVClient(object):
 
 KVCLIENT = None
 
-def init_kvstore(ip_config, num_servers, role):
+def init_kvstore(ip_config, num_servers, role, disable_backup_server=False):
     """initialize KVStore"""
     global KVCLIENT
     if KVCLIENT is None:
         if os.environ.get('DGL_DIST_MODE', 'standalone') == 'standalone':
             KVCLIENT = SA_KVClient()
         else:
-            KVCLIENT = KVClient(ip_config, num_servers, role)
+            KVCLIENT = KVClient(ip_config, num_servers, role, disable_backup_server)
 
 def close_kvstore():
     """Close the current KVClient"""

@@ -126,6 +126,7 @@ def _get_graph_from_shared_mem(graph_name):
     The client can access the graph structure and some metadata on nodes and edges directly
     through shared memory to reduce the overhead of data access.
     '''
+    # TODO(ds4gnn): only 1 partition per machine? what if backup server is disabled
     g, ntypes, etypes = heterograph_index.create_heterograph_from_shared_memory(graph_name)
     if g is None:
         return None
@@ -290,14 +291,17 @@ class DistGraphServer(KVServer):
     net_type : str
         Backend rpc type: ``'socket'`` or ``'tensorpipe'``
     '''
+
     def __init__(self, server_id, ip_config, num_servers,
                  num_clients, part_config, disable_shared_mem=False,
                  graph_format=('csc', 'coo'), keep_alive=False,
-                 net_type='socket'):
+                 net_type='socket', disable_backup_server=False):
         super(DistGraphServer, self).__init__(server_id=server_id,
                                               ip_config=ip_config,
                                               num_servers=num_servers,
-                                              num_clients=num_clients)
+                                              num_clients=num_clients,
+                                              disable_backup_server=disable_backup_server
+                                              )
         self.ip_config = ip_config
         self.num_servers = num_servers
         self.keep_alive = keep_alive
@@ -311,6 +315,11 @@ class DistGraphServer(KVServer):
             # Loading of node/edge_feats are deferred to lower the peak memory consumption.
             self.client_g, _, _, self.gpb, graph_name, \
                     ntypes, etypes = load_partition(part_config, self.part_id, load_feats=False)
+
+            # NOTE(ds4gnn): assign each partion a unique name, since we have multiple partitions on each machine
+            if self.disable_backup_server:
+                graph_name = self.name_on_machine(graph_name)
+
             print('load ' + graph_name)
             # formatting dtype
             # TODO(Rui) Formatting forcely is not a perfect solution.
@@ -327,16 +336,18 @@ class DistGraphServer(KVServer):
             self.client_g = self.client_g.formats(graph_format)
             self.client_g.create_formats_()
             if not disable_shared_mem:
+                # TODO(ds4gnn): disable_backup_server, how to copy, how to naming?
+                # self.client_g is locally loaded partition
                 self.client_g = _copy_graph_to_shared_mem(self.client_g, graph_name, graph_format)
 
         if not disable_shared_mem:
             self.gpb.shared_memory(graph_name)
         assert self.gpb.partid == self.part_id
         for ntype in ntypes:
-            node_name = HeteroDataName(True, ntype, "")
+            node_name = HeteroDataName(True, ntype, "", self.disable_backup_server, self.name_on_machine(""))
             self.add_part_policy(PartitionPolicy(node_name.policy_str, self.gpb))
         for etype in etypes:
-            edge_name = HeteroDataName(False, etype, "")
+            edge_name = HeteroDataName(False, etype, "", self.disable_backup_server, self.name_on_machine(""))
             self.add_part_policy(PartitionPolicy(edge_name.policy_str, self.gpb))
 
         if not self.is_backup_server():
@@ -346,7 +357,7 @@ class DistGraphServer(KVServer):
                 # The feature name has the following format: node_type + "/" + feature_name to avoid
                 # feature name collision for different node types.
                 ntype, feat_name = name.split('/')
-                data_name = HeteroDataName(True, ntype, feat_name)
+                data_name = HeteroDataName(True, ntype, feat_name, self.disable_backup_server, self.name_on_machine(feat_name))
                 self.init_data(name=str(data_name), policy_str=data_name.policy_str,
                                data_tensor=node_feats[name])
                 self.orig_data.add(str(data_name))
@@ -360,7 +371,7 @@ class DistGraphServer(KVServer):
                 # feature name collision for different edge types.
                 etype, feat_name = name.split('/')
                 etype = _etype_str_to_tuple(etype)
-                data_name = HeteroDataName(False, etype, feat_name)
+                data_name = HeteroDataName(False, etype, feat_name, self.disable_backup_server, self.name_on_machine(feat_name))
                 self.init_data(name=str(data_name), policy_str=data_name.policy_str,
                                data_tensor=edge_feats[name])
                 self.orig_data.add(str(data_name))
@@ -488,11 +499,12 @@ class DistGraph:
             rpc.set_num_client(1)
         else:
             self._init(gpb)
-            # Tell the backup servers to load the graph structure from shared memory.
-            for server_id in range(self._client.num_servers):
-                rpc.send_request(server_id, InitGraphRequest(graph_name))
-            for server_id in range(self._client.num_servers):
-                rpc.recv_response()
+            if self._client.disable_backup_server:
+                # Tell the backup servers to load the graph structure from shared memory.
+                for server_id in range(self._client.num_servers):
+                    rpc.send_request(server_id, InitGraphRequest(graph_name))
+                for server_id in range(self._client.num_servers):
+                    rpc.recv_response()
             self._client.barrier()
 
         self._init_ndata_store()
@@ -512,8 +524,13 @@ class DistGraph:
         self._client = get_kvstore()
         assert self._client is not None, \
                 'Distributed module is not initialized. Please call dgl.distributed.initialize.'
-        self._g = _get_graph_from_shared_mem(self.graph_name)
-        self._gpb = get_shared_mem_partition_book(self.graph_name)
+
+        graph_name = self.graph_name
+        if self._client.disable_backup_server:
+            graph_name = self._client.name_on_machine(graph_name)
+
+        self._g = _get_graph_from_shared_mem(graph_name)
+        self._gpb = get_shared_mem_partition_book(graph_name)
         if self._gpb is None:
             self._gpb = gpb
         self._client.map_shared_data(self._gpb)

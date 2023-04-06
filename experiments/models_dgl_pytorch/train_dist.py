@@ -215,7 +215,8 @@ def run(args, device, data):
 def main(args):
     print(socket.gethostname(), "Initializing DGL dist")
     t_b = time.time()
-    dgl.distributed.initialize(args.ip_config, net_type=args.net_type)
+    dgl.distributed.initialize(args.ip_config, net_type=args.net_type,
+                               disable_backup_server=args.disable_backup_server)
     print("local_rank={}, initialize TIME={:.4f} sec".format(
         args.local_rank, time.time()-t_b))
     if not args.standalone:
@@ -344,6 +345,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--stop_at_border", action="store_true", default=False, help="sampler will stop at border"
+    )
+    parser.add_argument(
+        "--disable_backup_server", action="store_true", default=False, help="when enabled, 1 graph server will serve 1 partition, no backup servers"
     )
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--num_hidden", type=int, default=128)

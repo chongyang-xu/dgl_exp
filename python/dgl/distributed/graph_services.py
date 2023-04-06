@@ -240,7 +240,10 @@ class SamplingRequest(Request):
         partition_book = server_state.partition_book
         kv_store = server_state.kv_store
         if self.prob is not None:
-            prob = [kv_store.data_store[self.prob]]
+            if kv_store.disable_backup_server:
+                prob = [kv_store.data_store[kv_store.name_on_machine(self.prob)]]
+            else:
+                prob = [kv_store.data_store[self.prob]]
         else:
             prob = None
         global_src, global_dst, global_eids = _sample_neighbors(
@@ -301,10 +304,16 @@ class SamplingRequestEtype(Request):
         etype_offset = partition_book.local_etype_offset
         # See NOTE 1
         if self.prob is not None:
-            probs = [
-                kv_store.data_store[key] if key != "" else None
-                for key in self.prob
-            ]
+            if kv_store.disable_backup_server:
+                probs = [
+                    kv_store.data_store[kv_store.name_on_machine(key)] if key != "" else None
+                    for key in self.prob
+                ]
+            else:
+                probs = [
+                    kv_store.data_store[key] if key != "" else None
+                    for key in self.prob
+                ]
         else:
             probs = None
         global_src, global_dst, global_eids = _sample_etype_neighbors(
