@@ -531,6 +531,21 @@ class DistGraph:
 
         self._g = _get_graph_from_shared_mem(graph_name)
         self._gpb = get_shared_mem_partition_book(graph_name)
+
+        cid = self._client._client_id
+        dbg_string = ""
+        dbg_string = dbg_string + "[{}b==================================={}b]\n".format(cid, cid)
+        dbg_string = dbg_string + "{}._client._machine_id={}\n".format(cid, self._client._machine_id)
+        dbg_string = dbg_string + "{}._client._client_id={}\n".format(cid, cid)
+        dbg_string = dbg_string + "{}._client._main_server_id={}\n".format(cid, self._client._main_server_id)
+        dbg_string = dbg_string + "{}._client._part_id={}\n".format(cid, self._client._part_id)
+        dbg_string = dbg_string + "{}._client._server_count={}\n".format(cid, self._client._server_count)
+        dbg_string = dbg_string + "{}._client._machine_count={}\n".format(cid, self._client._machine_count)
+        dbg_string = dbg_string + "{}._client._group_count={}\n".format(cid, self._client._group_count)
+        dbg_string = dbg_string + "{}.graph_name={}\n".format(cid, graph_name)
+        dbg_string = dbg_string + "{}._gpb={}\n".format(cid, self._gpb)
+        dbg_string = dbg_string + "[{}e==================================={}e]\n".format(cid, cid)
+
         if self._gpb is None:
             self._gpb = gpb
         self._client.map_shared_data(self._gpb)
