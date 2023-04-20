@@ -1,0 +1,8 @@
+{
+	"edge_file_bin"       : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_products/raw/edge_idx.bin",
+	"node_feats_file_bin" : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_products/raw/node_feat.npy",
+	"split_file_path"     : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_products/split/sales_ranking",
+	"node_label_file"     : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_products/raw/node-label.csv",
+	"num_nodes" : 2449029,
+	"num_edges" : 61859140
+}
