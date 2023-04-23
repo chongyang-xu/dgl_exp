@@ -738,7 +738,7 @@ class KVServer(object):
         if self.disable_backup_server:
             return "{}-part{}".format(name, self._part_id)
         else:
-            return "<invalid>"
+            return name
 
     def name_rm_part(self, name):
         idx = name.find("-part")
@@ -837,14 +837,18 @@ class KVServer(object):
             assert n_part == self._part_id
 
         self._part_policy[name] = self.find_policy(policy_str)
+        #print("========DBG: KVServer.init_data")
+        #print("name={}".format(name))
+        #print("data_tensor.shape {}".format(data_tensor.shape))
+        #print(self._part_policy)
+
         if data_tensor is not None: # Create shared-tensor
             data_type = F.reverse_data_type_dict[F.dtype(data_tensor)]
             shared_data = empty_shared_mem(name+'-kvdata-', True, data_tensor.shape, data_type)
             dlpack = shared_data.to_dlpack()
             self._data_store[name] = F.zerocopy_from_dlpack(dlpack)
             rpc.copy_data_to_shared_memory(self._data_store[name], data_tensor)
-            assert self._part_policy[name].get_part_size() == data_tensor.shape[0], \
-                    'kvserver expect partition {} for {} has {} rows, but gets {} rows'.format(
+            assert self._part_policy[name].get_part_size() == data_tensor.shape[0], "kvserver expect partition {} for {} has {} rows, but gets {} rows".format(
                         self._part_policy[name].part_id,
                         policy_str,
                         self._part_policy[name].get_part_size(),
@@ -983,7 +987,7 @@ class KVClient(object):
         if self.disable_backup_server:
             return "{}-part{}".format(name, self._part_id)
         else:
-            return "<invalid>"
+            return name
 
     def name_rm_part(self, name):
         idx = name.find("-part")

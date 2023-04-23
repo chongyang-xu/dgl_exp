@@ -6,6 +6,7 @@ from dgl.data import CoraGraphDataset
 from ogb.nodeproppred import DglNodePropPredDataset
 
 import torch as th
+import json
 
 def load_ogb(name, root_path):
     print("start loading", name)
@@ -39,10 +40,7 @@ def load_ogb(name, root_path):
     print("finish constructing", name)
     return graph, num_labels
 
-def main(args):
-    data_root_path=args.data_root_path
-    ori_ds_path = "{rt}/ds_ori".format(rt=data_root_path)
-    print("DATA root is: {0}".format(ori_ds_path))
+def load_dataset_into_memory(args, ori_ds_path):
     if args.dataset == "ogbpr":
         ds_full_name = 'ogbn-products'
         dgl_g, _ = load_ogb(ds_full_name, ori_ds_path)
@@ -58,12 +56,27 @@ def main(args):
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))
 
-    if args.self_loop:
+    if args.self_loop and dgl_g is not None:
         dgl_g = dgl.remove_self_loop(dgl_g)
         dgl_g = dgl.add_self_loop(dgl_g)
 
-    print(dgl_g)
+    return dgl_g
 
+def main(args):
+    data_root_path=args.data_root_path
+    ori_ds_path = "{rt}/ds_ori".format(rt=data_root_path)
+    print("DATA root is: {0}".format(ori_ds_path))
+
+    if args.part_algo[:2] == 'vc' and args.n_parts > 1:
+        dgl_g = None
+        balance_ntypes = None
+        with open(args.vc_json) as f:
+            vc_json = json.load(f)
+    else:
+        dgl_g = load_dataset_into_memory(args, ori_ds_path)
+        balance_ntypes = dgl_g.ndata['train_mask']
+        vc_json = None
+    print(dgl_g)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
     part_out_path = "{root}/{ds}/data_part_n{num}_{algo}".format(
@@ -80,15 +93,15 @@ def main(args):
                                             out_path=part_out_path,
                                             # TODO(ds4gnn): to understand
                                             part_method=args.part_algo,
+                                            num_hops=args.num_hops,
                                             graph_formats = 'csr',
-                                            balance_ntypes=dgl_g.ndata['train_mask'],
-                                            balance_edges=True)  # TODO(ds4gnn): to understand
+                                            balance_ntypes=balance_ntypes,
+                                            balance_edges=True,  # TODO(ds4gnn): to understand
+                                            vc_json=vc_json)
         # nmap, emap = partition_graph(..., return_mapping=True)
         print("Test load partition 0...")
         part_data = dgl.distributed.load_partition(part_config_path, 0)
         g, nfeat, efeat, partition_book, graph_name, ntypes, etypes = part_data  # unpack
-        print(g)
-        print("Test load partition 0...=====================")
 
         # dgl.distributed.load_partition_feats()
         # dgl.distributed.load_partition_book()
@@ -127,7 +140,7 @@ if __name__ == "__main__":
         "--part-algo",
         type=str,
         default="random",
-        help="Dataset name ('random', 'metis').",
+        help="Dataset name ('random', 'metis', 'vcrandom', 'vcoblivious', 'vchdrf').",
     )
     parser.add_argument(
         "--n-parts", type=int, required=True, help="number of graph partitions"
@@ -150,7 +163,18 @@ if __name__ == "__main__":
         default=True,
         help="add self loop to graph (default=True)",
     )
-
+    parser.add_argument(
+        "--num-hops",
+        type=int,
+        default=1,
+        help="number of halo hops",
+    )
+    parser.add_argument(
+        "--vc-json",
+        type=str,
+        default="{}",
+        help="path of a json file, keep meta info for vertex cut partition",
+    )
     args = parser.parse_args()
     print(args)
 

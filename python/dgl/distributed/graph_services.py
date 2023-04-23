@@ -18,6 +18,7 @@ from .rpc import (
     register_service,
     send_requests_to_machine,
 )
+from .graph_partition_book import VCMapPartitionBook
 
 __all__ = [
     "sample_neighbors",
@@ -470,7 +471,6 @@ LocalSampledGraph = namedtuple(
     "LocalSampledGraph", "global_src global_dst global_eids"
 )
 
-
 def _distributed_access(g, nodes, issue_remote_req, local_access, stop_at_border=False):
     """A routine that fetches local neighborhood of nodes from the distributed graph.
 
@@ -812,7 +812,6 @@ def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False, 
         return SamplingRequest(
             node_ids, fanout, edge_dir=edge_dir, prob=_prob, replace=replace
         )
-    # TODO(ds4gnn): use dgl.samping.neighbor.sample_neighbors
 
     def local_access(local_g, partition_book, local_nids):
         # See NOTE 1
@@ -829,13 +828,31 @@ def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False, 
             replace,
         )
 
-    # TODO(ds4gnn): sampler
+    # sampling for vertex cut
+    if isinstance(gpb, VCMapPartitionBook):
+        _prob = (
+            [g.edata[prob].local_partition] if prob is not None else None
+        )
+        sampled_graph = local_sample_neighbors(
+            g.local_partition,
+            nodes,
+            fanout,
+            edge_dir,
+            prob,
+            replace,
+            _dist_training=True,
+        )
+        src, dst = sampled_graph.edges()
+        frontier = graph((src, dst), num_nodes=gpb.get_part_size_node(gpb.partid))
+        frontier.edata[EID] = sampled_graph.edata[EID]
+        return frontier
+
     frontier = _distributed_access(
         g, nodes, issue_remote_req, local_access, stop_at_border)
     if not gpb.is_homogeneous:
-        return _frontier_to_heterogeneous_graph(g, frontier, gpb)
+        return _frontier_to_heterogeneous_graph(g, frontier, gpb), None
     else:
-        return frontier
+        return frontier, None
 
 
 def _distributed_edge_access(g, edges, issue_remote_req, local_access):

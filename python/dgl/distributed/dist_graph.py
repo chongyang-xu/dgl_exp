@@ -23,6 +23,7 @@ from .graph_partition_book import PartitionPolicy, get_shared_mem_partition_book
 from .graph_partition_book import HeteroDataName, parse_hetero_data_name
 from .graph_partition_book import NodePartitionPolicy, EdgePartitionPolicy
 from .graph_partition_book import _etype_str_to_tuple
+from .graph_partition_book import VCMapPartitionBook
 from .shared_mem_utils import _to_shared_mem, _get_ndata_path, _get_edata_path, DTYPE_DICT
 from . import rpc
 from . import role
@@ -529,6 +530,7 @@ class DistGraph:
         if self._client.disable_backup_server:
             graph_name = self._client.name_on_machine(graph_name)
 
+
         self._g = _get_graph_from_shared_mem(graph_name)
         self._gpb = get_shared_mem_partition_book(graph_name)
 
@@ -562,10 +564,18 @@ class DistGraph:
                     self.get_partition_book()
                 )
                 dtype, shape, _ = self._client.get_data_meta(str(name))
+
                 # We create a wrapper on the existing tensor in the kvstore.
                 data[name.get_name()] = DistTensor(shape, dtype,
                     name.get_name(), part_policy=policy, attach=False
                 )
+                # NOTES(ds4gnn): hack
+                if isinstance(self.get_partition_book(), VCMapPartitionBook):
+                    lookup_name = HeteroDataName(True, ntype, name.get_name(),
+                                          self._client.disable_backup_server,
+                                          self._client.name_on_machine(name.get_name()))
+                    lookup_name = str(lookup_name)
+                    data[name.get_name()] = self._client.data_store[lookup_name]
             if len(self.ntypes) == 1:
                 self._ndata_store = data
             else:
@@ -1325,7 +1335,7 @@ def _get_overlap(mask_arr, ids):
         masks = F.gather_row(F.tensor(mask_arr), ids)
         return F.boolean_mask(ids, masks)
 
-def _split_local(partition_book, rank, elements, local_eles):
+def _split_local(partition_book, rank, elements, local_eles, vc=False):
     ''' Split the input element list with respect to data locality.
     '''
     num_clients = role.get_num_trainers()
@@ -1336,7 +1346,11 @@ def _split_local(partition_book, rank, elements, local_eles):
             'The input rank ({}) is incorrect. #Trainers: {}'.format(rank, num_clients)
     # all ranks of the clients in the same machine are in a contiguous range.
     client_id_in_part = rank  % num_client_per_part
-    local_eles = _get_overlap(elements, local_eles)
+    if not vc:
+        local_eles = _get_overlap(elements, local_eles)
+    else:
+        local_mask_full = elements
+        local_eles = F.nonzero_1d(local_mask_full)
 
     # get a subset for the local client.
     size = len(local_eles) // num_client_per_part
@@ -1502,6 +1516,10 @@ def node_split(nodes, partition_book=None, ntype='_N', rank=None, force_even=Tru
     1D-tensor
         The vector of node IDs that belong to the rank.
     '''
+    if isinstance(partition_book, VCMapPartitionBook):
+        # NOTE(ds4gnn): this doesn't work with inference
+        return _split_local(partition_book, rank, nodes, None, vc=True)
+
     if not isinstance(nodes, DistTensor):
         assert partition_book is not None, 'Regular tensor requires a partition book.'
     elif partition_book is None:
@@ -1509,6 +1527,7 @@ def node_split(nodes, partition_book=None, ntype='_N', rank=None, force_even=Tru
 
     assert len(nodes) == partition_book._num_nodes(ntype), \
             'The length of boolean mask vector should be the number of nodes in the graph.'
+
     if rank is None:
         rank = role.get_trainer_rank()
     if force_even:

@@ -10,6 +10,10 @@
 
 #include "../heterograph.h"
 #include "../unit_graph.h"
+#include "../serialize/mmap_file.h"
+#include "../serialize/mmap_file.h"
+
+#include "vc.h"
 
 #if !defined(_WIN32)
 #include <GKlib.h>
@@ -271,6 +275,207 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionWithHalo_Hetero")
         ret_list.push_back(HeteroSubgraphRef(subgs[i]));
       }
       *rv = ret_list;
+    });
+
+// NOTE(ds4gnn)
+using vc_record_t=uint64_t;
+#define VCR_MPID_MASK (0xFFFF)
+inline vc_record_t set_mpid (vc_record_t& r, uint32_t pid){
+    r &= ~VCR_MPID_MASK;
+    return  r |= (pid & VCR_MPID_MASK);
+}
+//use uint64_t to store lid, to avoid overflow
+inline vc_record_t set_lid (vc_record_t& r, uint64_t lid){
+    return  r |= (lid << 16);
+}
+
+inline vc_record_t get_mpid(vc_record_t r){
+    return (r & VCR_MPID_MASK);
+}
+
+DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
+    .set_body([](DGLArgs args, DGLRetValue *rv) {
+      std::string edge_bin_file_name = args[0];
+      uint64_t num_nodes = args[1];
+      uint64_t num_edges = args[2];
+      uint64_t num_parts = args[3];
+      std::string strategy = args[4];
+      LOG(INFO) << edge_bin_file_name << " " << num_edges << " " << num_parts << " " << strategy;
+
+      using vc_vid_t=uint32_t;
+
+      dgl::serialize::MmapFile mf(edge_bin_file_name);
+      //maybe: generalize to more type
+      CHECK_EQ(mf.GetLength(), num_edges*2*sizeof(vc_vid_t)) << "file size doesn't match edge numer";
+
+      // a SEQUENTIAL vertex cut implementation, with few optimization
+      // construct each partitions edge list in original vid
+      std::unordered_map<uint32_t, std::vector<vc_vid_t>> pid2src;
+      std::unordered_map<uint32_t, std::vector<vc_vid_t>> pid2dst;
+      std::vector<vc_record_t> vc_map(num_nodes, VCR_MPID_MASK);//must initialize part id as invalid
+
+      vc_vid_t* src = mf.AsUint32Ptr();
+      vc_vid_t* dst = src + num_edges;
+
+      //d is degree : #machines which a vertex spans
+      //diff to graphlab, here just book keeping onece for all partitions
+      std::vector<std::bitset<MAX_N_PARTITION>> dht(MAX_N_NODE, 0);//2.4GB
+      std::vector<uint32_t> degree_dht(MAX_N_NODE, 0);//1.2GB
+      std::vector<size_t> part_num_edges(num_parts, 0);
+      std::vector<double> part_score(num_parts, 0);
+      bool usehash = false;
+      bool userecent = false;
+
+      vc_vid_t s_vid, d_vid;
+
+      if(strategy == "vcrandom"){
+        for (size_t idx=0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            uint32_t pid = HashEdge(s_vid, d_vid) % num_parts;
+            pid2src[pid].push_back(s_vid);
+            pid2dst[pid].push_back(d_vid);
+            // in this sequential implementation,
+            // assign main part_id when a node shows up for the first time
+            if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[s_vid], pid);
+            }
+            if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[d_vid], pid);
+            }
+        }
+      }else if (strategy == "vcoblivious"){
+        for (size_t idx=0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            uint32_t pid = AsignEdgeToPartitionGreedy(s_vid, d_vid, dht[s_vid], dht[d_vid], part_num_edges, part_score);
+            pid2src[pid].push_back(s_vid);
+            pid2dst[pid].push_back(d_vid);
+            // in this sequential implementation,
+            // assign main part_id when a node shows up for the first time
+            if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[s_vid], pid);
+            }
+            if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[d_vid], pid);
+            }
+        }
+      }else if (strategy == "vchdrf"){
+        for (size_t idx=0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            uint32_t pid = AsignEdgeToPartitionHDRF(s_vid, d_vid, dht[s_vid], dht[d_vid], degree_dht[s_vid], degree_dht[d_vid], part_num_edges, part_score);
+            pid2src[pid].push_back(s_vid);
+            pid2dst[pid].push_back(d_vid);
+            // in this sequential implementation,
+            // assign main part_id when a node shows up for the first time
+            if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[s_vid], pid);
+            }
+            if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[d_vid], pid);
+            }
+        }
+      }else{
+        LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
+      }
+
+      {
+        for(auto& p : pid2src){
+            uint32_t pid = p.first;
+            int end = p.second.size();
+            end = end > 3 ? 3 : end;
+            LOG(INFO) << "Partition: " << pid;
+            for(int i = 0; i < end; i++){
+                LOG(INFO) << "("  << p.second[i] <<", " << pid2dst[pid][i] <<")";
+            }
+        }
+      }
+
+    //Construct DGL's subgraphs
+    List<HeteroSubgraphRef> ret_list;
+    std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
+    runtime::parallel_for(0, num_parts, [&](int b, int e) {
+       for (auto l_pid = b; l_pid < e; l_pid++) {
+            auto& src_nodes = pid2src[l_pid];
+            auto& dst_nodes = pid2dst[l_pid];
+
+            //relabling
+            std::vector<vc_vid_t> induced_nodes;
+            {
+                std::unordered_map<vc_vid_t, vc_vid_t> seen_vid_to_nid;//to new id in current partition
+                for(int idx=0; idx < src_nodes.size(); idx++){
+                    vc_vid_t u = src_nodes[idx];
+                    vc_vid_t v = dst_nodes[idx];
+
+                    auto it = seen_vid_to_nid.find(u);
+                    if (it == seen_vid_to_nid.end()){
+                        induced_nodes.push_back(u);
+                        seen_vid_to_nid[u] = induced_nodes.size()-1;
+
+                        // if cur thread is the main part of u, cur thread's seen_vid_to_nid[u] is valid for vc_map[u]
+                        // if cur thread is not the main part of not u, it's other thread's resposibility to update vc_map[u]
+                        // lock should NOT be necessary here
+                        if (l_pid == get_mpid(vc_map[u])){
+                            set_lid(vc_map[u], induced_nodes.size()-1);
+                        }
+                        // hence, through vc_map[u], only main replica of a cutted vertex is visible
+                        // regarding to sampling, and consider there is no halo hops
+                        // if only sampling inside a partition, vc_map maps seed nodes (in global_id) to local_id only on main_part,
+                        //      during samping, those cutted vertex should be visiable inside local partition, and it's global_id is visible
+                        //      through induced_nodes[local_id] or ndata[NID][local_id], and ndata['node_feat'][local_id]
+                        // if sampling across partition, unlike edge-cut use inner_node outer_node, the boundary is cutted vertex
+                        //      and we currently treat all nodes as inner_nodes, vc_map have no replica infomation,
+                        //      sampling can't escape from the local partition
+                    }
+                    src_nodes[idx] = seen_vid_to_nid[u]; // update local new id in place
+
+                    it = seen_vid_to_nid.find(v);
+                    if (it == seen_vid_to_nid.end()){
+                        induced_nodes.push_back(v);
+                        seen_vid_to_nid[v] = induced_nodes.size()-1;
+
+                        if (l_pid == get_mpid(vc_map[v])){
+                            set_lid(vc_map[v], induced_nodes.size()-1);
+                        }
+
+                    }
+                    dst_nodes[idx] = seen_vid_to_nid[v]; // update local new id in place
+                }
+
+                //assign each sigle node
+                for(int idx=l_pid; idx < vc_map.size(); idx+=num_parts){
+                        if(get_mpid(vc_map[idx]) == VCR_MPID_MASK){
+                            set_mpid(vc_map[idx], l_pid);
+                            induced_nodes.push_back(idx);
+                            set_lid(vc_map[idx], induced_nodes.size()-1);
+                        }
+                }
+
+                LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
+            }
+
+            //contruct sub graph with new id
+            IdArray s_vids = aten::VecToIdArray(pid2src[l_pid]);
+            IdArray d_vids = aten::VecToIdArray(pid2dst[l_pid]);
+            aten::COOMatrix coo(induced_nodes.size(), induced_nodes.size(), s_vids, d_vids);
+            HeteroGraphPtr subg = CreateFromCOO(1, coo, ALL_CODE);
+            HeteroSubgraph hsg;
+            hsg.graph = subg;
+            hsg.induced_vertices = {aten::VecToIdArray(induced_nodes)};
+            if(l_pid == 0){
+                hsg.vc_maps = {aten::VecToIdArray(vc_map, 64)};
+            }
+            std::shared_ptr<HeteroSubgraph> subg_ptr(
+                new HeteroSubgraph(hsg));
+            subgs[l_pid] = subg_ptr;
+        }
+    });
+
+    for (size_t i = 0; i < subgs.size(); i++) {
+        ret_list.push_back(HeteroSubgraphRef(subgs[i]));
+    }
+    *rv = ret_list;
     });
 
 template <class IdType>

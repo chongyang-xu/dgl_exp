@@ -408,6 +408,8 @@ def floor_div(in1, in2):
         A framework-specific tensor.
     """
 
+def remainder(input, mod):
+    pass
 
 def reduce_sum(input):
     """Returns the sum of all elements in the input tensor.

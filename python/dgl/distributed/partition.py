@@ -10,15 +10,23 @@ from ..base import NID, EID, NTYPE, ETYPE, DGLError
 from ..convert import to_homogeneous
 from ..random import choice as random_choice
 from ..transforms import sort_csr_by_tag, sort_csc_by_tag
-from ..data.utils import load_graphs, save_graphs, load_tensors, save_tensors
+from ..data.utils import load_graphs, save_graphs, load_tensors, save_tensors, load_vc_map, save_vc_map
 from ..partition import (
     metis_partition_assignment,
     partition_graph_with_halo,
+    partition_graph_vertex_cut_with_halo,
     get_peak_mem,
+)
+from .partition_util import (
+    vc_load_full_node_feat_from_disk,
+    vc_load_full_node_split_mask_from_disk,
+    vc_load_full_node_label_from_disk,
+    local_to_part_mask
 )
 from .constants import DEFAULT_ETYPE, DEFAULT_NTYPE
 from .graph_partition_book import (
     RangePartitionBook,
+    VCMapPartitionBook,
     _etype_tuple_to_str,
     _etype_str_to_tuple,
 )
@@ -119,6 +127,113 @@ def _get_part_ranges(id_ranges):
         res[key] = np.concatenate([np.array(l) for l in id_ranges[key]]).reshape(-1, 2)
     return res
 
+def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts, vc_map, parts, halo_hops, vc_json):
+
+    assert halo_hops == 0, "halo hop not implemented"
+    assert num_parts > 1, "only handle >1 part(s)"
+
+    os.makedirs(out_path, mode=0o775, exist_ok=True)
+    out_path = os.path.abspath(out_path)
+    # support homo graph only
+    ntypes = { "_N" : 0}
+    etypes = { ('_N', '_E', '_N' ) : 0}
+    node_map_val = {}
+    edge_map_val = {}
+
+    VC_MAP_F_NAME = "vc_map.dgl"
+    part_metadata = {'graph_name': graph_name,
+                     'num_nodes': vc_json['num_nodes'],
+                     'num_edges': vc_json['num_edges'],
+                     'part_method': part_method,
+                     'num_parts': num_parts,
+                     'halo_hops': halo_hops,
+                     'node_map': node_map_val,
+                     'edge_map': edge_map_val,
+                     'ntypes': ntypes,
+                     'etypes': etypes,
+                     'vc_map' : VC_MAP_F_NAME
+                    }
+
+    start = time.time()
+
+    assert vc_map is not None
+    vc_map_file = os.path.join(out_path, VC_MAP_F_NAME)
+    save_tensors(vc_map_file, { 'vc' : vc_map }) #save_vc_map
+    print( "save_tensors to {}".format(vc_map_file) )
+
+    # just load to memory and split the node embeddings
+    # should optimize for big embedding
+    full_node_feat_path=vc_json['node_feats_file_bin']
+    full_node_feat=vc_load_full_node_feat_from_disk(full_node_feat_path)
+
+    split_file_path=vc_json['split_file_path']
+    train_mask, val_mask, test_mask = vc_load_full_node_split_mask_from_disk(split_file_path, vc_json['num_nodes'])
+
+    print("{} has {} train_nodes, {} val nodes, {} test nodes".format(
+        graph_name, F.count_nonzero(train_mask), F.count_nonzero(val_mask), F.count_nonzero(test_mask)
+    ))
+
+    full_node_label_path=vc_json['node_label_file']
+    full_node_label=vc_load_full_node_label_from_disk(full_node_label_path)
+
+
+    part_metadata['part_num_nodes'] = []
+    part_metadata['part_num_edges'] = []
+
+    for part_id in range(num_parts):
+        part = parts[part_id]
+        node_feats = {}
+        edge_feats = {}
+        # when halo hops == 0, all nodes are inner nodes
+        local_mask = local_to_part_mask(vc_map, part_id)
+
+        print("part-{}  has {} nodes, {} inner nodes, {} main_nodes".format(part_id, part.number_of_nodes(), part.number_of_nodes(), F.count_nonzero(local_mask)))
+        print("             {} edges, {} inner edges".format(part.number_of_edges(), part.number_of_edges()) )
+        part_metadata['part_num_nodes'].append(part.number_of_nodes())
+        part_metadata['part_num_edges'].append(part.number_of_edges())
+
+        # splitting happens here
+        train_mask_part = F.logical_and(train_mask, local_mask)
+        val_mask_part   = F.logical_and(val_mask, local_mask)
+        test_mask_part  = F.logical_and(test_mask, local_mask)
+        #print("             {} train_nodes, {} val nodes, {} test nodes".format(
+        #    F.count_nonzero(train_mask_part), F.count_nonzero(val_mask_part), F.count_nonzero(test_mask_part)
+        #))
+
+        local_nodes = part.ndata[NID]
+        node_feats['_N' + '/' + 'feat'] = F.gather_row(full_node_feat, local_nodes)
+        node_feats['_N' + '/' + 'train_mask'] = F.gather_row(train_mask_part, local_nodes)
+        node_feats['_N' + '/' + 'val_mask'] = F.gather_row(val_mask_part, local_nodes)
+        node_feats['_N' + '/' + 'test_mask'] = F.gather_row(test_mask_part, local_nodes)
+        node_feats['_N' + '/' + 'label'] = F.gather_row(full_node_label, local_nodes)
+
+        #F.tensor() # don't handle edge feature now
+        edge_feats['_N:_E:_N' + '/' + 'feat'] = F.zerocopy_from_numpy(np.zeros(part.number_of_edges()))
+
+        part_dir = os.path.join(out_path, "part" + str(part_id))
+        node_feat_file = os.path.join(part_dir, "node_feat.dgl")
+        edge_feat_file = os.path.join(part_dir, "edge_feat.dgl")
+        part_graph_file = os.path.join(part_dir, "graph.dgl")
+
+        part_metadata['part-{}'.format(part_id)] = {
+            'node_feats': os.path.relpath(node_feat_file, out_path),
+            'edge_feats': os.path.relpath(edge_feat_file, out_path),
+            'part_graph': os.path.relpath(part_graph_file, out_path),
+            }
+
+        os.makedirs(part_dir, mode=0o775, exist_ok=True)
+        save_tensors(node_feat_file, node_feats)
+        save_tensors(edge_feat_file, edge_feats)
+
+        sort_etypes = len(etypes) > 1
+        _save_graphs(part_graph_file, [part], formats=graph_formats,
+            sort_etypes=sort_etypes)
+    print('{}: splitting feature and save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
+        part_method, time.time() - start, get_peak_mem()))
+
+    _dump_part_config(f'{out_path}/{graph_name}.json', part_metadata)
+
+
 def load_partition(part_config, part_id, load_feats=True):
     ''' Load data of a partition from the data path.
 
@@ -170,7 +285,8 @@ def load_partition(part_config, part_id, load_feats=True):
     graph = load_graphs(relative_to_config(part_files['part_graph']))[0][0]
 
     assert NID in graph.ndata, "the partition graph should contain node mapping to global node ID"
-    assert EID in graph.edata, "the partition graph should contain edge mapping to global edge ID"
+    if 'vc_map' not in part_metadata:
+        assert EID in graph.edata, "the partition graph should contain edge mapping to global edge ID"
 
     gpb, graph_name, ntypes, etypes = load_partition_book(part_config, part_id)
     ntypes_list = list(ntypes.keys())
@@ -243,6 +359,10 @@ def load_partition_feats(part_config, part_id, load_nodes=True, load_edges=True)
     node_feats = None
     if load_nodes:
         node_feats = load_tensors(relative_to_config(part_files['node_feats']))
+        #print("===========DBG in {}".format(load_partition_feats.__qualname__))
+        #print("===========node_feats:")
+        #for k,v in node_feats.items():
+        #    print("{}:{}".format(k, v))
     edge_feats = None
     if load_edges:
         edge_feats = load_tensors(relative_to_config(part_files['edge_feats']))
@@ -299,6 +419,25 @@ def load_partition_book(part_config, part_id):
     assert 'edge_map' in part_metadata, "cannot get the edge map."
     assert 'graph_name' in part_metadata, "cannot get the graph name"
 
+    # TODO(ds4gnn)? implement
+    ntypes = {DEFAULT_NTYPE: 0}
+    etypes = {DEFAULT_ETYPE: 0}
+
+    if 'ntypes' in part_metadata:
+        ntypes = part_metadata['ntypes']
+    if 'etypes' in part_metadata:
+        etypes = part_metadata['etypes']
+
+    if part_metadata['part_method'][:2] == 'vc':
+        assert 'vc_map' in part_metadata, "vc_map is required for vertex cut"
+        dir_path = os.path.dirname(os.path.realpath(part_config))
+        vc_map_file = os.path.join(dir_path, part_metadata['vc_map'])
+        t = load_tensors(vc_map_file)
+        assert 'vc' in t
+        vc_map = t['vc']
+
+        return VCMapPartitionBook(part_id, num_parts, part_metadata['num_nodes'], part_metadata['num_edges'], part_metadata['part_num_nodes'], part_metadata['part_num_edges'], ntypes, etypes, vc_map), part_metadata['graph_name'], ntypes, etypes
+
     # If this is a range partitioning, node_map actually stores a list, whose elements
     # indicate the boundary of range partitioning. Otherwise, node_map stores a filename
     # that contains node map in a NumPy array.
@@ -315,13 +454,6 @@ def load_partition_book(part_config, part_id):
         is_range_part = False
     if isinstance(edge_map, list):
         edge_map = {DEFAULT_ETYPE: edge_map}
-
-    ntypes = {DEFAULT_NTYPE: 0}
-    etypes = {DEFAULT_ETYPE: 0}
-    if 'ntypes' in part_metadata:
-        ntypes = part_metadata['ntypes']
-    if 'etypes' in part_metadata:
-        etypes = part_metadata['etypes']
 
     if isinstance(node_map, dict):
         for key in node_map:
@@ -410,9 +542,10 @@ def _set_trainer_ids(g, sim_g, node_parts):
                 g.edges(etype=c_etype)[1])
             g.edges[c_etype].data['trainer_id'] = trainer_id
 
+
 def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method="metis",
                     balance_ntypes=None, balance_edges=False, return_mapping=False,
-                    num_trainers_per_machine=1, objtype='cut', graph_formats=None):
+                    num_trainers_per_machine=1, objtype='cut', graph_formats=None, vc_json=None):
     ''' Partition a graph for distributed training and store the partitions on files.
 
     The partitioning occurs in three steps: 1) run a partition algorithm (e.g., Metis) to
@@ -609,9 +742,11 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
     ...     g, node_feats, edge_feats, gpb, graph_name, ntypes_list, etypes_list,
     ... ) = dgl.distributed.load_partition('output/test.json', 0)
     '''
-    # 'coo' is required for partition
-    assert 'coo' in np.concatenate(list(g.formats().values())), \
-        "'coo' format should be allowed for partitioning graph."
+
+    if part_method[:2] != 'vc':
+        # 'coo' is required for partition
+        assert 'coo' in np.concatenate(list(g.formats().values())), \
+            "'coo' format should be allowed for partitioning graph."
     def get_homogeneous(g, balance_ntypes):
         if g.is_homogeneous:
             sim_g = to_homogeneous(g)
@@ -651,6 +786,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
     if objtype not in ['cut', 'vol']:
         raise ValueError
 
+    partition_with_reshuffle = False
     if num_parts == 1:
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
@@ -692,6 +828,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         parts[0].edata['inner_edge'] = F.ones((sim_g.number_of_edges(),),
             RESERVED_FIELD_DTYPE['inner_edge'], F.cpu())
     elif part_method in ('metis', 'random'):
+        partition_with_reshuffle = True
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
         print('Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
@@ -723,13 +860,35 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
             node_parts = random_choice(num_parts, sim_g.number_of_nodes())
         start = time.time()
         parts, orig_nids, orig_eids = partition_graph_with_halo(sim_g, node_parts, num_hops,
-                                                                reshuffle=True)
+                                                                reshuffle=partition_with_reshuffle)
         print('Splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
             time.time() - start, get_peak_mem()))
         if return_mapping:
             orig_nids, orig_eids = _get_orig_ids(g, sim_g, orig_nids, orig_eids)
+    elif part_method[:2] == "vc":
+        # vertex cut
+        partition_with_reshuffle = False    #TODO(ds4gnn)?
+        assert part_method == "vcrandom" or part_method == "vcoblivious" or part_method == "vchdrf"
+        assert vc_json is not None, "vc_json is required"
+        edge_file_bin = vc_json['edge_file_bin']
+        num_nodes = vc_json['num_nodes']
+        num_edges = vc_json['num_edges']
+        start = time.time()
+        assert num_hops == 0, "halo hops not implemented"
+        vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method)
+        print('{}: splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+            part_method, time.time() - start, get_peak_mem()))
+        _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json)
+
+        if return_mapping:
+            assert False, "return_mapping not implemented"
+            return None, None
+        else:
+            return
     else:
         raise Exception('Unknown partitioning method: ' + part_method)
+
+    # NOTE(ds4gnn): following is for numparts=1 or edge cut
 
     # If the input is a heterogeneous graph, get the original node types and original node IDs.
     # `part' has three types of node data at this point.
@@ -866,7 +1025,9 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                     print('part {} has {} nodes and {} are inside the partition'.format(
                         part_id, part.number_of_nodes(), len(local_nodes)))
 
+                #print("===========DBG in {}".format(partition_graph.__qualname__))
                 for name in g.nodes[ntype].data:
+                    #print("name: {} in g.nodes[ntype].data".format(name))
                     if name in [NID, 'inner_node']:
                         continue
                     node_feats[ntype + '/' + name] = F.gather_row(g.nodes[ntype].data[name],

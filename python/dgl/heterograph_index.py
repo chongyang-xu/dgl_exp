@@ -1157,6 +1157,19 @@ class HeteroSubgraphIndex(ObjectBase):
         ret = _CAPI_DGLHeteroSubgraphGetInducedEdges(self)
         return [F.from_dgl_nd(v) for v in ret]
 
+    @property
+    def vc_map(self):
+        """Induced nodes for each node type. The return list
+        length should be equal to the number of node types.
+
+        Returns
+        -------
+        list of utils.Index
+            Induced nodes
+        """
+        ret = _CAPI_DGLHeteroSubgraphGetVCMap(self)
+        ret = [F.from_dgl_nd(v) for v in ret]
+        return ret
 
 #################################################################
 # Creators

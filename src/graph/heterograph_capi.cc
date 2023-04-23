@@ -449,6 +449,17 @@ DGL_REGISTER_GLOBAL(
       *rv = induced_verts;
     });
 
+DGL_REGISTER_GLOBAL(
+    "heterograph_index._CAPI_DGLHeteroSubgraphGetVCMap")
+    .set_body([](DGLArgs args, DGLRetValue* rv) {
+      HeteroSubgraphRef subg = args[0];
+      List<Value> ret;
+      for (IdArray arr : subg->vc_maps) {
+        ret.push_back(Value(MakeValue(arr)));
+      }
+      *rv = ret;
+    });
+
 DGL_REGISTER_GLOBAL("heterograph_index._CAPI_DGLHeteroSubgraphGetInducedEdges")
     .set_body([](DGLArgs args, DGLRetValue* rv) {
       HeteroSubgraphRef subg = args[0];

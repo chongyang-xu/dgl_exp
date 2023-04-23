@@ -258,6 +258,69 @@ def partition_graph_with_halo(g, node_part, extra_cached_hops, reshuffle=False):
     else:
         return subg_dict, None, None
 
+def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts,
+                                        strategy, extra_cached_hops=0, reshuffle=False
+                                        ):
+    """Partition a graph by cutting vertex.
+
+    Parameters
+    ------------
+    edge_bin_file_name: str
+        the path to prepared edge binary file, the bin file must be
+        ----------------------------------------
+        |src0|src1|...|src_n|dst0|dst1|...|dst_n|
+        ----------------------------------------
+        src0 or dst0 are global vertex id
+        id must be int32
+    num_edges: uint32
+        total number of edges
+        UINT32_MAX=4,294,967,295 or 4.2 billion
+        UINT64_MAX=18,446,744,073,709,551,615 or 18,446,744 trillion
+    num_parts: uint32
+        number of partitions
+    strategy: str
+        vertex cut strategy: vcrandom,
+    extra_cached_hops: int
+        The number of hops a HALO node can be accessed.
+    reshuffle : bool
+        Resuffle nodes so that nodes in the same partition are in the same ID range.
+
+    Returns
+    --------
+    a dict of DGLGraphs
+        The key is the partition ID and the value is the DGLGraph of the partition.
+    Tensor
+        1D tensor that stores the mapping between the reshuffled node IDs and
+        the original node IDs if 'reshuffle=True'. Otherwise, return None.
+    Tensor
+        1D tensor that stores the mapping between the reshuffled edge IDs and
+        the original edge IDs if 'reshuffle=True'. Otherwise, return None.
+    """
+
+    assert extra_cached_hops == 0, "halo nodes not implemented"
+    assert reshuffle == False, "reshuffle not implemented in vertex cut"
+    orig_nids = None
+    orig_eids = None
+
+    subg_dict = {}
+    subgs = _CAPI_DGLPartitionVertexCutWithHalo_Hetero(
+        edge_file_bin,
+        num_nodes,
+        num_edges,
+        num_parts,
+        strategy
+    )
+
+    for idx, subg in enumerate(subgs):
+        subg1 = DGLGraph(gidx=subg.graph, ntypes=["_N"], etypes=["_E"])
+        subg1.ndata[NID] = subg.induced_nodes[0]    # None
+        subg1.ndata["inner_node"] = subg.induced_nodes[0]
+        subg1.ndata["part_id"] = F.full_1d(subg1.ndata[NID].shape[0], idx, dtype=F.data_type_dict['int16'], ctx=F.context(subg1.ndata[NID]))
+
+        subg1.edata[EID] = F.zerocopy_from_numpy(np.zeros(subg1.num_edges(), np.int64)) # dummy eid
+        subg1.edata["inner_edge"] = F.zerocopy_from_numpy(np.zeros(subg1.num_edges(), np.int64)) # dummy inner_edge
+        subg_dict[idx] = subg1
+    return subgs[0].vc_map, subg_dict, orig_nids, orig_eids
 
 def get_peak_mem():
     """Get the peak memory size.

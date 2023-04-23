@@ -551,6 +551,24 @@ struct HeteroSubgraph : public runtime::Object {
    */
   std::vector<IdArray> induced_edges;
 
+  /*
+    a vc_record use uint64_t, format as follows:
+        |------48 bits-----------|-16bits-|
+        |      local_id          |part_id |
+        |------------------------|--------|
+        use low  16 bits as part_id (only main part_id),  support upto 65536 partitions
+        use high 48 bits as local_id, support up to 4096 * 4.294967295 B nodes per partition
+        in this map, we have no information which vertex is cutted
+
+    to get local_id ( from main partition only) from vc_map:
+        main_part_id = vc_map[global_id] & 0xFFFF;
+        local_id = vc_map[global_id] >> 16;
+
+    to get global_id ( from every partition) from induced_vertices or ndata[NID]
+        global_id =  induced_vertices[local_id]
+  */
+  std::vector<IdArray> vc_maps;
+
   static constexpr const char* _type_key = "graph.HeteroSubgraph";
   DGL_DECLARE_OBJECT_TYPE_INFO(HeteroSubgraph, runtime::Object);
 };

@@ -14,6 +14,7 @@ import requests
 from .. import backend as F
 from .graph_serialize import load_graphs, load_labels, save_graphs
 from .tensor_serialize import load_tensors, save_tensors
+from .vc_map_serialize import save_vc_map, load_vc_map
 
 __all__ = [
     "loadtxt",
@@ -29,6 +30,8 @@ __all__ = [
     "save_tensors",
     "load_tensors",
     "add_nodepred_split",
+    "save_vc_map",
+    "load_vc_map",
 ]
 
 

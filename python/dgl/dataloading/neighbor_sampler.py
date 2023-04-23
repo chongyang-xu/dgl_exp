@@ -2,6 +2,8 @@
 from ..base import NID, EID
 from ..transforms import to_block
 from .base import BlockSampler
+from .. import backend as F
+from ..distributed.graph_partition_book import VCMapPartitionBook
 
 class NeighborSampler(BlockSampler):
     """Sampler that builds computational dependency of node representations via

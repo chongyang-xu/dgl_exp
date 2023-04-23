@@ -9,6 +9,7 @@ from .. import backend as F
 from .. import utils
 from .._ffi.ndarray import empty_shared_mem
 from ..base import DGLError
+from ..data.utils import load_tensors
 from ..ndarray import exist_shared_mem_array
 from ..partition import NDArrayPartition
 from .constants import DEFAULT_ETYPE, DEFAULT_NTYPE
@@ -112,8 +113,12 @@ def _move_metadata_to_shared_mem(
         ),
         _get_ndata_path(graph_name, "meta"),
     )
-    node_map = _to_shared_mem(node_map, _get_ndata_path(graph_name, "node_map"))
-    edge_map = _to_shared_mem(edge_map, _get_edata_path(graph_name, "edge_map"))
+    if len(node_map) > 0:
+        node_map = _to_shared_mem(node_map, _get_ndata_path(graph_name, "node_map"))
+        edge_map = _to_shared_mem(edge_map, _get_edata_path(graph_name, "edge_map"))
+    else:
+        node_map = None
+        edge_map = None
     return meta, node_map, edge_map
 
 
@@ -150,29 +155,32 @@ def _get_shared_mem_metadata(graph_name):
     meta = F.asnumpy(F.zerocopy_from_dlpack(dlpack))
     (
         is_range_part,
-        _,
-        _,
+        num_nodes,
+        num_edges,
         num_partitions,
         part_id,
         node_map_len,
         edge_map_len,
     ) = meta
 
-    # Load node map
-    data = empty_shared_mem(
-        _get_ndata_path(graph_name, "node_map"), False, (node_map_len,), dtype
-    )
-    dlpack = data.to_dlpack()
-    node_map = F.zerocopy_from_dlpack(dlpack)
+    if node_map_len > 0:
+        # Load node map
+        data = empty_shared_mem(
+            _get_ndata_path(graph_name, "node_map"), False, (node_map_len,), dtype
+        )
+        dlpack = data.to_dlpack()
+        node_map = F.zerocopy_from_dlpack(dlpack)
 
-    # Load edge_map
-    data = empty_shared_mem(
-        _get_edata_path(graph_name, "edge_map"), False, (edge_map_len,), dtype
-    )
-    dlpack = data.to_dlpack()
-    edge_map = F.zerocopy_from_dlpack(dlpack)
-
-    return is_range_part, part_id, num_partitions, node_map, edge_map
+        # Load edge_map
+        data = empty_shared_mem(
+            _get_edata_path(graph_name, "edge_map"), False, (edge_map_len,), dtype
+        )
+        dlpack = data.to_dlpack()
+        edge_map = F.zerocopy_from_dlpack(dlpack)
+    else:
+        node_map = None
+        edge_map = None
+    return is_range_part, part_id, num_partitions, num_nodes, num_edges, node_map, edge_map
 
 
 def get_shared_mem_partition_book(graph_name):
@@ -197,6 +205,8 @@ def get_shared_mem_partition_book(graph_name):
         is_range_part,
         part_id,
         num_parts,
+        num_nodes,
+        num_edges,
         node_map_data,
         edge_map_data,
     ) = _get_shared_mem_metadata(graph_name)
@@ -221,6 +231,26 @@ def get_shared_mem_partition_book(graph_name):
             edge_map[etype] = eid_range
         return RangePartitionBook(
             part_id, num_parts, node_map, edge_map, ntypes, etypes
+        )
+    elif is_range_part == 2: # VCMap
+        global_unique_num_nodes = num_nodes
+        global_unique_num_edges = num_edges
+        shape = (global_unique_num_nodes,)
+        dtype = DTYPE_DICT[F.int64] # should be uint64
+        data = empty_shared_mem(_get_ndata_path(graph_name, 'vc_map'), False, shape, dtype)
+        dlpack = data.to_dlpack()
+        vc_map = F.zerocopy_from_dlpack(dlpack)
+        ntypes = None
+        etypes = None
+
+        node_map_data = pickle.loads(bytes(F.asnumpy(node_map_data).tolist()))
+        edge_map_data = pickle.loads(bytes(F.asnumpy(edge_map_data).tolist()))
+        # node_map_data is reused as num list
+        part_num_nodes_l = node_map_data
+        part_num_edges_l = edge_map_data
+
+        return VCMapPartitionBook(
+            part_id, num_parts, global_unique_num_nodes, global_unique_num_edges, part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map
         )
     else:
         raise TypeError("Only RangePartitionBook is supported currently.")
@@ -532,6 +562,121 @@ class GraphPartitionBook(ABC):
         Tensor
             Homogeneous edge IDs.
         """
+def get_part_size_node(part_id, type_name):
+    pass
+def get_part_size_edge(part_id, type_name):
+    pass
+
+class VCMapPartitionBook(GraphPartitionBook):
+    def __init__(self, part_id, num_parts, num_nodes, num_edges,part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map):
+        self._part_id = part_id
+        self._num_parts = num_parts
+        self._ntypes = [ '_N'  ]
+        self._etypes = [ '_E' ]
+        self._canonical_etypes = [ ('_N', '_E', '_N') ]
+        self._vc_map=vc_map
+        self._global_unique_num_nodes = num_nodes
+        self._global_unique_num_edges = num_edges
+        self._num_nodes_with_replica = 0
+        self._num_edges_with_replica = 0
+
+        # use name node_map for convinience when move to shm
+        self._node_map  = part_num_nodes_l
+        self._edge_map  = part_num_edges_l
+
+        # Get meta data of the partition book
+        pids = F.remainder(self._vc_map, 0x10000)
+        self._partition_meta_data = []
+        main_nodes_sum = 0
+        for partid in range(self._num_parts):
+            part_info = {}
+            part_info["part_id"] = partid
+            part_info["num_nodes"] = part_num_nodes_l[partid]
+            part_info["num_edges"] = part_num_edges_l[partid]
+            self._num_nodes_with_replica += part_num_nodes_l[partid]
+            self._num_edges_with_replica += part_num_edges_l[partid]
+
+            self._partition_meta_data.append(part_info)
+
+            mask = pids == partid
+            main_nodes_sum = main_nodes_sum + F.count_nonzero(mask)
+        assert self._global_unique_num_edges == self._num_edges_with_replica, "should equal in vertex cut"
+        print("[WARNING] VCMapPartitionBook: #uni_nodes={}, #replia_num={}".format(self._global_unique_num_nodes, self._num_nodes_with_replica ))
+        if self._global_unique_num_nodes != main_nodes_sum:
+            print("[WARNING] VCMapPartitionBook: #uni_nodes={}, #main_nodes={}".format(self._global_unique_num_nodes, main_nodes_sum ))
+
+    def shared_memory(self, graph_name):
+        node_map_pickle = list(pickle.dumps(self._node_map))
+        edge_map_pickle = list(pickle.dumps(self._edge_map))
+
+        self._meta = _move_metadata_to_shared_mem(
+            graph_name,
+            self._global_unique_num_nodes,
+            self._global_unique_num_edges,
+            self._part_id,
+            self._num_parts,
+            F.tensor(node_map_pickle),
+            F.tensor(edge_map_pickle),
+            2,
+        )
+        self._vc_map_shm = _to_shared_mem(self._vc_map, _get_ndata_path(graph_name, 'vc_map'))
+
+    def _num_edges(self, etype=DEFAULT_ETYPE):
+        return self._global_unique_num_edges
+    def _num_nodes(self, ntype=DEFAULT_NTYPE):
+        return self._num_nodes_with_replica
+    def num_partitions(self):
+        return self._num_parts
+    def metadata(self):
+        return self._partition_meta_data
+    def nid2partid(self, nids, ntype=DEFAULT_NTYPE):
+        vcr_s = F.gather_row(self._vc_map, nids)
+        return F.remainder(vcr_s, 0x10000)
+    def eid2partid(self, eids, etype):
+        assert False, "not implemented"
+    def partid2nids(self, partid, ntype=DEFAULT_NTYPE):
+        pids = F.remainder(self._vc_map, 0x10000)
+        mask = pids == partid
+        return F.nonzero_1d(mask)
+
+    def partid2eids(self, partid, etype):
+        print("[WARN]: not implemented partid2eids()")
+        return F.tensor(np.zeros((1,), dtype=np.int64))
+
+    def nid2localnid(self, nids, partid, ntype=DEFAULT_NTYPE):
+        assert self._part_id == partid, "only support get localnid of local paritition "
+        return F.gather_row(self._vc_map, nids) >> 16
+
+    def eid2localeid(self, eids, partid, etype):
+        assert False, "not implemented"
+    @property
+    def partid(self):
+        return self._part_id
+    @property
+    def ntypes(self):
+        return self._ntypes
+    @property
+    def etypes(self):
+        return self._etypes
+    @property
+    def canonical_etypes(self):
+        return self._canonical_etypes
+    @property
+    def is_homogeneous(self):
+        return True
+    def map_to_per_ntype(self, ids):
+        assert False, "not implemented"
+    def map_to_per_etype(self, ids):
+        assert False, "not implemented"
+    def map_to_homo_nid(self, ids, ntype):
+        assert False, "not implemented"
+    def map_to_homo_eid(self, ids, etype):
+        assert False, "not implemented"
+    def get_part_size_node(self, part_id, type_name="_N"):
+        return self._partition_meta_data[part_id]['num_nodes']
+    def get_part_size_edge(self, part_id, type_name="_E"):
+        print("[WARNING] get_part_size_edge({},{}) return fake number".format(part_id, type_name) )
+        return self._partition_meta_data[part_id]['num_edges']
 
 class RangePartitionBook(GraphPartitionBook):
     """This partition book supports more efficient storage of partition information.
@@ -942,6 +1087,10 @@ class RangePartitionBook(GraphPartitionBook):
             )
         return ret
 
+    def get_part_size_node(self, part_id, type_name):
+        return len(self.partid2nids(part_id, type_name))
+    def get_part_size_edge(self, part_id, type_name):
+        return len(self.partid2eids(part_id, type_name))
 
 NODE_PART_POLICY = "node"
 EDGE_PART_POLICY = "edge"
@@ -1092,13 +1241,9 @@ class PartitionPolicy(object):
             data size
         """
         if self.is_node:
-            return len(
-                self._partition_book.partid2nids(self._part_id, self.type_name)
-            )
+            return self._partition_book.get_part_size_node(self._part_id, self.type_name)
         else:
-            return len(
-                self._partition_book.partid2eids(self._part_id, self.type_name)
-            )
+            return self._partition_book.get_part_size_edge(self._part_id, self.type_name)
 
     def get_size(self):
         """Get the full size of the data.

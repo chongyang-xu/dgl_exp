@@ -155,6 +155,8 @@ def sum(input, dim, keepdims=False):
 def floor_div(in1, in2):
     return in1 // in2
 
+def remainder(input, mod):
+    return th.remainder(input, mod)
 
 def reduce_sum(input):
     return input.sum()
