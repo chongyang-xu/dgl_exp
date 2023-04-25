@@ -1,8 +1,0 @@
-{
-	"edge_file_bin"       : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_papers100M/raw/edge_index.bin",
-	"node_feats_file_bin" : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_papers100M/raw/node_feat.bin",
-	"split_file_path"     : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_papers100M/split/time",
-	"node_label_file"     : "/workspace/work/ds4gnn/DATA/ds_ori/ogbn_papers100M/raw/node-label.npz",
-	"num_nodes" : 111059956,
-	"num_edges" : 1615685872
-}
