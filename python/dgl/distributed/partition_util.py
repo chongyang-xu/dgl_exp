@@ -19,7 +19,7 @@ def vc_load_full_node_split_mask_from_disk(split_file_path, num_nodes):
 
     return train_mask, val_mask, test_mask
 
-def vc_load_full_node_feat_from_disk(full_node_feat_path):
+def vc_load_full_node_feat_from_disk(full_node_feat_path, shape):
     if full_node_feat_path[-4:] == ".npy":
         full_node_feat = np.load(full_node_feat_path)
     elif full_node_feat_path[-4:] == ".npz":
@@ -27,9 +27,11 @@ def vc_load_full_node_feat_from_disk(full_node_feat_path):
         full_node_feat = data_dict['node_feat']
     elif full_node_feat_path[-4:] == ".bin":
         full_node_feat = np.fromfile(full_node_feat_path, dtype=np.float32)
+        full_node_feat = full_node_feat.reshape(shape)
     else:
         assert False, "{} not supported, only .npy and npz are supported".format(full_node_feat_path[-4:])
     assert full_node_feat is not None
+    print("full_node_feat.shape:{}".format(full_node_feat.shape))
     full_node_feat = F.zerocopy_from_numpy(full_node_feat)
     return full_node_feat
 
@@ -40,6 +42,8 @@ def vc_load_full_node_label_from_disk(full_node_label_path):
         node_label = np.load(full_node_label_path)
     elif full_node_label_path[-4:] == ".csv":
         node_label = np.loadtxt(full_node_label_path, delimiter=',')
+    elif full_node_label_path[-4:] == ".bin":
+        node_label = np.fromfile(full_node_label_path, dtype=np.float32)
     else:
         assert False, "only .npz and .npy formats are implemented"
 

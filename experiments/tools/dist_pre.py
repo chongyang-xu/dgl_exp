@@ -7,6 +7,7 @@ from ogb.nodeproppred import DglNodePropPredDataset
 
 import torch as th
 import json
+import numpy as np
 
 def load_ogb(name, root_path):
     print("start loading", name)
@@ -62,6 +63,68 @@ def load_dataset_into_memory(args, ori_ds_path):
 
     return dgl_g
 
+def prepare_dataset_for_vc(args, ori_ds_path):
+    if args.dataset == "ogbpa":
+        ds_full_name = 'ogbn_papers100M'
+
+        raw_path = "{}/{}/raw".format(ori_ds_path, ds_full_name)
+        label_file = os.path.join(raw_path, "node-label.npz")
+        data_file = os.path.join(raw_path, "data.npz")
+
+        vc_json_file = "{}/vc_ogbpa.json".format(raw_path)
+        if os.path.exists(vc_json_file):
+            print("found {}, return prepare_dataset_for_vc".format(vc_json_file))
+            return vc_json_file
+
+        node_label=np.load(label_file, mmap_mode='r')
+        lst = node_label.files
+        print("loading {}".format(label_file))
+        for item in lst:
+            print("{}\n".format(item))
+            print(node_label[item])
+            print("{}: shape:{}, dtype:{}".format(item, node_label[item].flatten().shape, node_label[item].dtype))
+            node_label[item].flatten().tofile("{}.bin".format(item))
+
+
+        data_dict=np.load(data_file, mmap_mode='r')
+        num_nodes_list = data_dict['num_nodes_list']
+        num_edges_list = data_dict['num_edges_list']
+
+        assert len(num_edges_list) == 1, "ogbpa is homo"
+        print("loading {}".format(data_file))
+        for key in list(data_dict.keys()):
+            if key == 'edge_index':
+                dt = data_dict[key].astype(np.uint32)
+                print("{}: shape:{}, dtype:{}".format(key, dt.shape, dt.dtype))
+                edge_file_bin = "{}/{}.bin".format(raw_path, key)
+                dt.tofile(edge_file_bin)
+            else:
+                print("{}: shape:{}, dtype:{}".format(key, data_dict[key].shape, data_dict[key].dtype))
+                if key == 'node_feat':
+                    node_feat_dim=data_dict[key].shape[1]
+                    node_feats_file_bin="{}/{}.bin".format(raw_path, key)
+                    data_dict[key].tofile(node_feats_file_bin)
+        vc_json = {}
+        vc_json['edge_file_bin'] = edge_file_bin
+        vc_json['node_feats_file_bin'] = node_feats_file_bin
+        split_file_path = "{}/{}/split/time".format(ori_ds_path, ds_full_name)
+        vc_json['split_file_path'] = split_file_path
+        vc_json['num_nodes'] = num_nodes_list[0]
+        vc_json['num_edges'] = num_edges_list[0]
+        vc_json['feat_dim'] = node_feat_dim
+
+        with open(vc_json_file, 'w') as f:
+            json.dump(vc_json, f)
+    if args.dataset == "ogbpr":
+        ds_full_name = 'ogbn_products'
+
+        raw_path = "{}/ds_ori/{}/raw".format(ori_ds_path, ds_full_name)
+        vc_json_file = "{}/vc_ogbpr.json".format(raw_path)
+        if os.path.exists(vc_json_file):
+            return vc_json_file
+    else:
+        raise ValueError("Unknown dataset: {}".format(args.dataset))
+
 def main(args):
     data_root_path=args.data_root_path
     ori_ds_path = "{rt}/ds_ori".format(rt=data_root_path)
@@ -70,7 +133,8 @@ def main(args):
     if args.part_algo[:2] == 'vc' and args.n_parts > 1:
         dgl_g = None
         balance_ntypes = None
-        with open(args.vc_json) as f:
+        vc_json_file = prepare_dataset_for_vc(args, ori_ds_path)
+        with open(vc_json_file) as f:
             vc_json = json.load(f)
     else:
         dgl_g = load_dataset_into_memory(args, ori_ds_path)
@@ -168,12 +232,6 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="number of halo hops",
-    )
-    parser.add_argument(
-        "--vc-json",
-        type=str,
-        default="{}",
-        help="path of a json file, keep meta info for vertex cut partition",
     )
     args = parser.parse_args()
     print(args)

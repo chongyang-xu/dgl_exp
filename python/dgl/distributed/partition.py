@@ -164,7 +164,8 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
     # just load to memory and split the node embeddings
     # should optimize for big embedding
     full_node_feat_path=vc_json['node_feats_file_bin']
-    full_node_feat=vc_load_full_node_feat_from_disk(full_node_feat_path)
+    feat_shape=(vc_json['num_nodes'], vc_json['feat_dim'])
+    full_node_feat=vc_load_full_node_feat_from_disk(full_node_feat_path, feat_shape)
 
     split_file_path=vc_json['split_file_path']
     train_mask, val_mask, test_mask = vc_load_full_node_split_mask_from_disk(split_file_path, vc_json['num_nodes'])
