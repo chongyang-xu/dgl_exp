@@ -850,9 +850,9 @@ def sample_neighbors(g, nodes, fanout, edge_dir="in", prob=None, replace=False, 
     frontier = _distributed_access(
         g, nodes, issue_remote_req, local_access, stop_at_border)
     if not gpb.is_homogeneous:
-        return _frontier_to_heterogeneous_graph(g, frontier, gpb), None
+        return _frontier_to_heterogeneous_graph(g, frontier, gpb)
     else:
-        return frontier, None
+        return frontier
 
 
 def _distributed_edge_access(g, edges, issue_remote_req, local_access):
