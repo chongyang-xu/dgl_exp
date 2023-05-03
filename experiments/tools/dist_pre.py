@@ -8,6 +8,7 @@ from ogb.nodeproppred import DglNodePropPredDataset
 import torch as th
 import json
 import numpy as np
+import pandas as pd
 
 def load_ogb(name, root_path):
     print("start loading", name)
@@ -78,13 +79,13 @@ def prepare_dataset_for_vc(args, ori_ds_path):
 
         node_label=np.load(label_file, mmap_mode='r')
         lst = node_label.files
+        node_label_file_bin = "{}/node_label.bin".format(raw_path)
         print("loading {}".format(label_file))
         for item in lst:
             print("{}\n".format(item))
             print(node_label[item])
             print("{}: shape:{}, dtype:{}".format(item, node_label[item].flatten().shape, node_label[item].dtype))
-            node_label[item].flatten().tofile("{}.bin".format(item))
-
+            node_label[item].flatten().tofile(node_label_file_bin)
 
         data_dict=np.load(data_file, mmap_mode='r')
         num_nodes_list = data_dict['num_nodes_list']
@@ -102,9 +103,14 @@ def prepare_dataset_for_vc(args, ori_ds_path):
                 print("{}: shape:{}, dtype:{}".format(key, data_dict[key].shape, data_dict[key].dtype))
                 if key == 'node_feat':
                     node_feat_dim=data_dict[key].shape[1]
+                    if 'int' in str(data_dict[key].dtype):
+                        node_feat = data_dict[key].astype(np.int64)
+                    else:# float
+                        node_feat = data_dict[key].astype(np.float32)
                     node_feats_file_bin="{}/{}.bin".format(raw_path, key)
-                    data_dict[key].tofile(node_feats_file_bin)
+                    node_feat.tofile(node_feats_file_bin)
         vc_json = {}
+        vc_json['node_label_file'] = node_label_file_bin
         vc_json['edge_file_bin'] = edge_file_bin
         vc_json['node_feats_file_bin'] = node_feats_file_bin
         split_file_path = "{}/{}/split/time".format(ori_ds_path, ds_full_name)
@@ -113,15 +119,60 @@ def prepare_dataset_for_vc(args, ori_ds_path):
         vc_json['num_edges'] = num_edges_list[0]
         vc_json['feat_dim'] = node_feat_dim
 
-        with open(vc_json_file, 'w') as f:
+        with open(vc_json_file, 'w+') as f:
             json.dump(vc_json, f)
+        return vc_json_file
     if args.dataset == "ogbpr":
         ds_full_name = 'ogbn_products'
 
-        raw_path = "{}/ds_ori/{}/raw".format(ori_ds_path, ds_full_name)
+        raw_path = "{}/{}/raw".format(ori_ds_path, ds_full_name)
+        label_file = os.path.join(raw_path, "node-label.csv.gz")
+        edge_file = os.path.join(raw_path, "edge.csv.gz")
+        feat_file = os.path.join(raw_path, "node-feat.csv.gz")
+        num_node_list_file = os.path.join(raw_path, "num-node-list.csv.gz")
+        num_edge_list_file = os.path.join(raw_path, "num-edge-list.csv.gz")
+
         vc_json_file = "{}/vc_ogbpr.json".format(raw_path)
         if os.path.exists(vc_json_file):
             return vc_json_file
+
+        edge = pd.read_csv(edge_file, compression='gzip', header = None).values.T.astype(np.int64) # (2, num_edge) numpy array
+        edge=edge.astype(np.uint32)
+        node_feat = pd.read_csv(feat_file, compression='gzip', header = None).values
+        num_node_list = pd.read_csv(num_node_list_file, compression='gzip', header = None).astype(np.int64)[0].tolist() # (num_graph, ) python list
+        num_edge_list = pd.read_csv(num_edge_list_file, compression='gzip', header = None).astype(np.int64)[0].tolist() # (num_edge, ) python list
+        node_label = pd.read_csv(label_file, compression='gzip', header = None).values
+
+        assert len(num_edge_list) == 1, "ogbpa is homo"
+
+        edge_file_bin = "{}/edge_index.bin".format(raw_path)
+        node_feats_file_bin="{}/node_feat.bin".format(raw_path)
+        node_label_file_bin = "{}/node_label.npy".format(raw_path)
+
+        np.save(node_label_file_bin, node_label.flatten())
+        print("node_label.shape:{}, dtype:{}".format(node_label.flatten().shape, node_label.dtype))
+        edge.tofile(edge_file_bin)
+        if 'int' in str(node_feat.dtype):
+            node_feat = node_feat.astype(np.int64)
+        else:
+            # float
+            node_feat = node_feat.astype(np.float32)
+        node_feat.tofile(node_feats_file_bin)
+        print("node_feat.shape:{}, dtype:{}".format(node_feat.shape, node_feat.dtype))
+
+        vc_json = {}
+        vc_json['node_label_file'] = node_label_file_bin
+        vc_json['edge_file_bin'] = edge_file_bin
+        vc_json['node_feats_file_bin'] = node_feats_file_bin
+        split_file_path = "{}/{}/split/sales_ranking".format(ori_ds_path, ds_full_name)
+        vc_json['split_file_path'] = split_file_path
+        vc_json['num_nodes'] = num_node_list[0]
+        vc_json['num_edges'] = num_edge_list[0]
+        vc_json['feat_dim'] = node_feat.shape[1]
+
+        with open(vc_json_file, 'w+') as f:
+            json.dump(vc_json, f)
+        return vc_json_file
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))
 
@@ -130,11 +181,11 @@ def main(args):
     ori_ds_path = "{rt}/ds_ori".format(rt=data_root_path)
     print("DATA root is: {0}".format(ori_ds_path))
 
-    if args.part_algo[:2] == 'vc' and args.n_parts > 1:
+    if args.part_algo[:2] == 'vc':
         dgl_g = None
         balance_ntypes = None
         vc_json_file = prepare_dataset_for_vc(args, ori_ds_path)
-        with open(vc_json_file) as f:
+        with open(vc_json_file, "r") as f:
             vc_json = json.load(f)
     else:
         dgl_g = load_dataset_into_memory(args, ori_ds_path)
