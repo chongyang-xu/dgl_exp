@@ -384,7 +384,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         for(auto& p : pid2src){
             uint32_t pid = p.first;
             int end = p.second.size();
-            end = end > 3 ? 3 : end;
+            end = end > 30 ? 3 : end;
             LOG(INFO) << "Partition: " << pid;
             for(int i = 0; i < end; i++){
                 LOG(INFO) << "("  << p.second[i] <<", " << pid2dst[pid][i] <<")";
@@ -463,6 +463,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             HeteroSubgraph hsg;
             hsg.graph = subg;
             hsg.induced_vertices = {aten::VecToIdArray(induced_nodes)};
+            EdgeArray ea = subg->Edges(0);
+            hsg.induced_edges = {ea.id};
             if(l_pid == 0){
                 hsg.vc_maps = {aten::VecToIdArray(vc_map, 64)};
             }
@@ -471,6 +473,18 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             subgs[l_pid] = subg_ptr;
         }
     });
+
+    {
+    for(auto& p : pid2src){
+        uint32_t pid = p.first;
+        int end = p.second.size();
+        end = end > 30 ? 3 : end;
+        LOG(INFO) << "Partition: " << pid;
+        for(int i = 0; i < end; i++){
+            LOG(INFO) << "("  << p.second[i] <<", " << pid2dst[pid][i] <<")";
+        }
+    }
+    }
 
     for (size_t i = 0; i < subgs.size(); i++) {
         ret_list.push_back(HeteroSubgraphRef(subgs[i]));

@@ -311,16 +311,18 @@ def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, nu
         strategy
     )
 
+    vc_map = subgs[0].vc_map
     for idx, subg in enumerate(subgs):
         subg1 = DGLGraph(gidx=subg.graph, ntypes=["_N"], etypes=["_E"])
         subg1.ndata[NID] = subg.induced_nodes[0]    # None
-        subg1.ndata["inner_node"] = subg.induced_nodes[0]
-        subg1.ndata["part_id"] = F.full_1d(subg1.ndata[NID].shape[0], idx, dtype=F.data_type_dict['int16'], ctx=F.context(subg1.ndata[NID]))
+        subg1.ndata["inner_node"] = F.zerocopy_from_numpy(np.ones(subg1.num_nodes(), np.int8))
 
-        subg1.edata[EID] = F.zerocopy_from_numpy(np.zeros(subg1.num_edges(), np.int64)) # dummy eid
-        subg1.edata["inner_edge"] = F.zerocopy_from_numpy(np.zeros(subg1.num_edges(), np.int64)) # dummy inner_edge
+        subg1.ndata["part_id"] = F.full_1d(subg1.ndata[NID].shape[0], idx, dtype=F.data_type_dict['int64'], ctx=F.context(subg1.ndata[NID]))
+
+        subg1.edata[EID] = subg.induced_edges[0]
+        subg1.edata["inner_edge"] = F.zerocopy_from_numpy(np.ones(subg1.num_edges(), np.int8))
         subg_dict[idx] = subg1
-    return subgs[0].vc_map, subg_dict, orig_nids, orig_eids
+    return vc_map, subg_dict, orig_nids, orig_eids
 
 def get_peak_mem():
     """Get the peak memory size.

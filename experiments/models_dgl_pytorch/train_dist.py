@@ -278,6 +278,7 @@ def main(args):
             g.ndata["test_mask"], pb, force_even=force_even_flg
         )
     local_nid = pb.partid2nids(pb.partid).detach().numpy()
+    # train_nid is lid when use VCMapPartition
     print(
         "part {}, train: {} (local: {}), val: {} (local: {}), test: {} "
         "(local: {})".format(

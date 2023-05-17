@@ -41,7 +41,7 @@ DGL_REGISTER_GLOBAL("data.tensor_serialize._CAPI_LoadVCMap")
       CHECK_EQ(magincNum, kDGLSerialize_VCMap) << "Invalid DGL tensor file";
       
       LOG(FATAL) << "not implemented";
-      *rv = r;
+      *rv = false;
     });
 
 }  // namespace serialize
