@@ -130,7 +130,7 @@ def _get_part_ranges(id_ranges):
 def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts, vc_map, parts, halo_hops, vc_json):
 
     assert halo_hops == 0, "halo hop not implemented"
-    assert num_parts > 1, "only handle >1 part(s)"
+    assert num_parts > 0, "only handle >0 part(s)"
 
     os.makedirs(out_path, mode=0o775, exist_ok=True)
     out_path = os.path.abspath(out_path)
@@ -788,7 +788,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         raise ValueError
 
     partition_with_reshuffle = False
-    if num_parts == 1:
+    if num_parts == 1 and part_method[:2] != "vc":
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
         print('Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
