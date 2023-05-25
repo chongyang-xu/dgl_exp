@@ -297,7 +297,7 @@ def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, nu
         the original edge IDs if 'reshuffle=True'. Otherwise, return None.
     """
 
-    assert extra_cached_hops == 0, "halo nodes not implemented"
+    assert extra_cached_hops <= 1, "halo nodes not implemented"
     assert reshuffle == False, "reshuffle not implemented in vertex cut"
     orig_nids = None
     orig_eids = None
@@ -308,7 +308,8 @@ def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, nu
         num_nodes,
         num_edges,
         num_parts,
-        strategy
+        strategy,
+        extra_cached_hops
     )
 
     vc_map = subgs[0].vc_map

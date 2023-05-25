@@ -279,6 +279,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionWithHalo_Hetero")
 
 // NOTE(ds4gnn)
 using vc_record_t=uint64_t;
+using vc_vid_t=uint32_t;
+
 #define VCR_MPID_MASK (0xFFFF)
 inline vc_record_t set_mpid (vc_record_t& r, uint32_t pid){
     r &= ~VCR_MPID_MASK;
@@ -293,6 +295,161 @@ inline vc_record_t get_mpid(vc_record_t r){
     return (r & VCR_MPID_MASK);
 }
 
+void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pid2src,
+                         std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pid2dst,
+                         std::vector<vc_record_t>& vc_map,
+                         std::vector<std::shared_ptr<HeteroSubgraph>>& subgs,
+                         uint64_t num_parts,
+                         bool use_1_hop_halo){
+
+    // a vector for all partitions, used for extend 1 hop neighbors
+    //    in each partition: store for each remote partition, their 1_hop neighbor edges in this parition
+    //     store src and dst seperately
+    std::vector<std::vector<std::vector<vc_vid_t>>> remote_1_hop_edges_u;
+    std::vector<std::vector<std::vector<vc_vid_t>>> remote_1_hop_edges_v;
+    for(int i = 0; i < num_parts; i++){
+        std::vector<std::vector<vc_vid_t>> t;
+        t.resize(num_parts);
+        remote_1_hop_edges_u.push_back(t);
+        remote_1_hop_edges_v.push_back(t);
+    }
+
+    runtime::parallel_for(0, num_parts, [&](int b, int e) {
+       for (auto l_pid = b; l_pid < e; l_pid++) {
+            auto& src_nodes = pid2src[l_pid];
+            auto& dst_nodes = pid2dst[l_pid];
+
+            //relabling
+            std::vector<vc_vid_t> induced_nodes;
+            std::unordered_map<vc_vid_t, vc_vid_t> seen_vid_to_nid;//to new id in current partition
+            {
+                for(int idx=0; idx < src_nodes.size(); idx++){
+                    vc_vid_t u = src_nodes[idx];
+                    vc_vid_t v = dst_nodes[idx];
+
+                    bool u_is_mirror = false;
+
+                    auto it = seen_vid_to_nid.find(u);
+                    if (it == seen_vid_to_nid.end()){
+                        induced_nodes.push_back(u);
+                        seen_vid_to_nid[u] = induced_nodes.size()-1;
+
+                        // if cur thread is the main part of u, cur thread's seen_vid_to_nid[u] is valid for vc_map[u]
+                        // if cur thread is not the main part of u, it's other thread's resposibility to update vc_map[u]
+                        // lock should NOT be necessary here
+                        if (l_pid == get_mpid(vc_map[u])){
+                            set_lid(vc_map[u], induced_nodes.size()-1);
+                        } else {
+                            u_is_mirror = true;
+                            // cur thread is not main part and node u is a mirror
+                            // handle neighbors for mirror`
+                            auto mpid = get_mpid(vc_map[u]);
+                            remote_1_hop_edges_u[l_pid][mpid].push_back(u);
+                            remote_1_hop_edges_v[l_pid][mpid].push_back(v);
+                        }
+                        // hence, through vc_map[u], only main replica of a cutted vertex is visible
+                        // regarding to sampling, and consider there is no halo hops
+                        // if only sampling inside a partition, vc_map maps seed nodes (in global_id) to local_id only on main_part,
+                        //      during samping, those cutted vertex should be visiable inside local partition, and it's global_id is visible
+                        //      through induced_nodes[local_id] or ndata[NID][local_id], and ndata['node_feat'][local_id]
+                        // if sampling across partition, unlike edge-cut use inner_node outer_node, the boundary is cutted vertex
+                        //      and we currently treat all nodes as inner_nodes, vc_map have no replica infomation,
+                        //      sampling can't escape from the local partition
+                    }
+                    src_nodes[idx] = seen_vid_to_nid[u]; // update local new id in place
+
+                    it = seen_vid_to_nid.find(v);
+                    if (it == seen_vid_to_nid.end()){
+                        induced_nodes.push_back(v);
+                        seen_vid_to_nid[v] = induced_nodes.size()-1;
+
+                        if (l_pid == get_mpid(vc_map[v])){
+                            set_lid(vc_map[v], induced_nodes.size()-1);
+                        }else{
+                            //only add once for (u, v)
+                            if(!u_is_mirror){
+                                auto mpid = get_mpid(vc_map[u]);
+                                remote_1_hop_edges_u[l_pid][mpid].push_back(u);
+                                remote_1_hop_edges_v[l_pid][mpid].push_back(v);
+                            }
+                        }
+
+                    }
+                    dst_nodes[idx] = seen_vid_to_nid[v]; // update local new id in place
+                }
+
+                //assign each sigle node
+                for(int idx=l_pid; idx < vc_map.size(); idx+=num_parts){
+                        if(get_mpid(vc_map[idx]) == VCR_MPID_MASK){
+                            set_mpid(vc_map[idx], l_pid);
+                            induced_nodes.push_back(idx);
+                            set_lid(vc_map[idx], induced_nodes.size()-1);
+                        }
+                }
+
+                LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
+            }
+
+#pragma omp barrier
+
+            ////////////////////////////////////////////////////
+            //extend 1 hop neighbor
+            ////////////////////////////////////////////////////
+            bool enter_loop = use_1_hop_halo;
+            for(int i = 0; enter_loop && i < remote_1_hop_edges_u.size(); i++){
+                LOG(INFO) << "Including 1 hop neighbors for partition: " << l_pid;
+
+                auto& edge_src = remote_1_hop_edges_u[i][l_pid];
+                auto& edge_dst = remote_1_hop_edges_v[i][l_pid];
+
+                if (edge_src.size() != edge_dst.size()){
+                    LOG(FATAL) << "edge_src and edge_dst must have same length";
+                }
+
+                for(int idx=0; idx < edge_src.size(); idx++){
+                    auto u = edge_src[idx];
+                    auto v = edge_dst[idx];
+
+                    auto it = seen_vid_to_nid.find(u);
+                    if (it == seen_vid_to_nid.end()){
+                        // just include 1 hop neighbor and treat them as inner node
+                        induced_nodes.push_back(u);
+                        seen_vid_to_nid[u] = induced_nodes.size()-1;
+                    }
+                    // extends 1 hop neighbors into current partition
+                    pid2src[l_pid].push_back(seen_vid_to_nid[u]);
+
+                    it = seen_vid_to_nid.find(v);
+                    if (it == seen_vid_to_nid.end()){
+                        induced_nodes.push_back(v);
+                        seen_vid_to_nid[v] = induced_nodes.size()-1;
+                    }
+                    pid2dst[l_pid].push_back(seen_vid_to_nid[v]);
+                }
+            }
+#pragma omp barrier
+
+            //contruct sub graph with new id
+            IdArray s_vids = aten::VecToIdArray(pid2src[l_pid]);
+            IdArray d_vids = aten::VecToIdArray(pid2dst[l_pid]);
+            aten::COOMatrix coo(induced_nodes.size(), induced_nodes.size(), s_vids, d_vids);
+            HeteroGraphPtr subg = CreateFromCOO(1, coo, ALL_CODE);
+            HeteroSubgraph hsg;
+            hsg.graph = subg;
+            hsg.induced_vertices = {aten::VecToIdArray(induced_nodes)};
+            EdgeArray ea = subg->Edges(0);
+            hsg.induced_edges = {ea.id};
+            if(l_pid == 0){
+                hsg.vc_maps = {aten::VecToIdArray(vc_map, 64)};
+            }
+            std::shared_ptr<HeteroSubgraph> subg_ptr(
+                new HeteroSubgraph(hsg));
+            subgs[l_pid] = subg_ptr;
+        }
+    });
+
+}
+
 DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     .set_body([](DGLArgs args, DGLRetValue *rv) {
       std::string edge_bin_file_name = args[0];
@@ -300,9 +457,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       uint64_t num_edges = args[2];
       uint64_t num_parts = args[3];
       std::string strategy = args[4];
-      LOG(INFO) << edge_bin_file_name << " " << num_edges << " " << num_parts << " " << strategy;
+      uint64_t extra_hops = args[5];
+      bool use_1_hop_halo =  extra_hops > 0;
 
-      using vc_vid_t=uint32_t;
+      LOG(INFO) << edge_bin_file_name << " " << num_edges << " " << num_parts << " " << strategy;
 
       dgl::serialize::MmapFile mf(edge_bin_file_name);
       //maybe: generalize to more type
@@ -319,8 +477,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
 
       //d is degree : #machines which a vertex spans
       //diff to graphlab, here just book keeping onece for all partitions
-      std::vector<std::bitset<MAX_N_PARTITION>> dht(MAX_N_NODE, 0);//2.4GB
-      std::vector<uint32_t> degree_dht(MAX_N_NODE, 0);//1.2GB
+      std::vector<std::bitset<MAX_N_PARTITION>> dht(MAX_N_NODE, 0);//2.4GB degree hash table, record machine ids each node spans
+      std::vector<uint32_t> degree_dht(MAX_N_NODE, 0);//1.2GB, record degree number of each node
       std::vector<size_t> part_num_edges(num_parts, 0);
       std::vector<double> part_score(num_parts, 0);
       bool usehash = false;
@@ -392,98 +550,21 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         }
       }
 
-    //Construct DGL's subgraphs
+    // Construct DGL's subgraphs
     List<HeteroSubgraphRef> ret_list;
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
-    runtime::parallel_for(0, num_parts, [&](int b, int e) {
-       for (auto l_pid = b; l_pid < e; l_pid++) {
-            auto& src_nodes = pid2src[l_pid];
-            auto& dst_nodes = pid2dst[l_pid];
-
-            //relabling
-            std::vector<vc_vid_t> induced_nodes;
-            {
-                std::unordered_map<vc_vid_t, vc_vid_t> seen_vid_to_nid;//to new id in current partition
-                for(int idx=0; idx < src_nodes.size(); idx++){
-                    vc_vid_t u = src_nodes[idx];
-                    vc_vid_t v = dst_nodes[idx];
-
-                    auto it = seen_vid_to_nid.find(u);
-                    if (it == seen_vid_to_nid.end()){
-                        induced_nodes.push_back(u);
-                        seen_vid_to_nid[u] = induced_nodes.size()-1;
-
-                        // if cur thread is the main part of u, cur thread's seen_vid_to_nid[u] is valid for vc_map[u]
-                        // if cur thread is not the main part of not u, it's other thread's resposibility to update vc_map[u]
-                        // lock should NOT be necessary here
-                        if (l_pid == get_mpid(vc_map[u])){
-                            set_lid(vc_map[u], induced_nodes.size()-1);
-                        }
-                        // hence, through vc_map[u], only main replica of a cutted vertex is visible
-                        // regarding to sampling, and consider there is no halo hops
-                        // if only sampling inside a partition, vc_map maps seed nodes (in global_id) to local_id only on main_part,
-                        //      during samping, those cutted vertex should be visiable inside local partition, and it's global_id is visible
-                        //      through induced_nodes[local_id] or ndata[NID][local_id], and ndata['node_feat'][local_id]
-                        // if sampling across partition, unlike edge-cut use inner_node outer_node, the boundary is cutted vertex
-                        //      and we currently treat all nodes as inner_nodes, vc_map have no replica infomation,
-                        //      sampling can't escape from the local partition
-                    }
-                    src_nodes[idx] = seen_vid_to_nid[u]; // update local new id in place
-
-                    it = seen_vid_to_nid.find(v);
-                    if (it == seen_vid_to_nid.end()){
-                        induced_nodes.push_back(v);
-                        seen_vid_to_nid[v] = induced_nodes.size()-1;
-
-                        if (l_pid == get_mpid(vc_map[v])){
-                            set_lid(vc_map[v], induced_nodes.size()-1);
-                        }
-
-                    }
-                    dst_nodes[idx] = seen_vid_to_nid[v]; // update local new id in place
-                }
-
-                //assign each sigle node
-                for(int idx=l_pid; idx < vc_map.size(); idx+=num_parts){
-                        if(get_mpid(vc_map[idx]) == VCR_MPID_MASK){
-                            set_mpid(vc_map[idx], l_pid);
-                            induced_nodes.push_back(idx);
-                            set_lid(vc_map[idx], induced_nodes.size()-1);
-                        }
-                }
-
-                LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
-            }
-
-            //contruct sub graph with new id
-            IdArray s_vids = aten::VecToIdArray(pid2src[l_pid]);
-            IdArray d_vids = aten::VecToIdArray(pid2dst[l_pid]);
-            aten::COOMatrix coo(induced_nodes.size(), induced_nodes.size(), s_vids, d_vids);
-            HeteroGraphPtr subg = CreateFromCOO(1, coo, ALL_CODE);
-            HeteroSubgraph hsg;
-            hsg.graph = subg;
-            hsg.induced_vertices = {aten::VecToIdArray(induced_nodes)};
-            EdgeArray ea = subg->Edges(0);
-            hsg.induced_edges = {ea.id};
-            if(l_pid == 0){
-                hsg.vc_maps = {aten::VecToIdArray(vc_map, 64)};
-            }
-            std::shared_ptr<HeteroSubgraph> subg_ptr(
-                new HeteroSubgraph(hsg));
-            subgs[l_pid] = subg_ptr;
-        }
-    });
+    ConstructVCSubGraph(pid2src, pid2dst, vc_map, subgs, num_parts, use_1_hop_halo);
 
     {
-    for(auto& p : pid2src){
-        uint32_t pid = p.first;
-        int end = p.second.size();
-        end = end > 30 ? 3 : end;
-        LOG(INFO) << "Partition: " << pid;
-        for(int i = 0; i < end; i++){
-            LOG(INFO) << "("  << p.second[i] <<", " << pid2dst[pid][i] <<")";
+        for(auto& p : pid2src){
+            uint32_t pid = p.first;
+            int end = p.second.size();
+            end = end > 30 ? 3 : end;
+            LOG(INFO) << "Partition: " << pid;
+            for(int i = 0; i < end; i++){
+                LOG(INFO) << "("  << p.second[i] <<", " << pid2dst[pid][i] <<")";
+            }
         }
-    }
     }
 
     for (size_t i = 0; i < subgs.size(); i++) {

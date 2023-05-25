@@ -600,7 +600,8 @@ class VCMapPartitionBook(GraphPartitionBook):
 
             mask = pids == partid
             main_nodes_sum = main_nodes_sum + F.count_nonzero(mask)
-        assert self._global_unique_num_edges == self._num_edges_with_replica, "should equal in vertex cut"
+
+        print("[WARNING] VCMapPartitionBook: #uni_edges={}, #replia_edges={}".format(self._global_unique_num_edges, self._num_edges_with_replica ))
         print("[WARNING] VCMapPartitionBook: #uni_nodes={}, #replia_num={}".format(self._global_unique_num_nodes, self._num_nodes_with_replica ))
         if self._global_unique_num_nodes != main_nodes_sum:
             print("[WARNING] VCMapPartitionBook: #uni_nodes={}, #main_nodes={}".format(self._global_unique_num_nodes, main_nodes_sum ))
@@ -622,7 +623,7 @@ class VCMapPartitionBook(GraphPartitionBook):
         self._vc_map_shm = _to_shared_mem(self._vc_map, _get_ndata_path(graph_name, 'vc_map'))
 
     def _num_edges(self, etype=DEFAULT_ETYPE):
-        return self._global_unique_num_edges
+        return self._num_edges_with_replica
     def _num_nodes(self, ntype=DEFAULT_NTYPE):
         return self._num_nodes_with_replica
     def num_partitions(self):

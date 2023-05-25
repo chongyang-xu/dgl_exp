@@ -129,7 +129,7 @@ def _get_part_ranges(id_ranges):
 
 def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts, vc_map, parts, halo_hops, vc_json):
 
-    assert halo_hops == 0, "halo hop not implemented"
+    assert halo_hops <=1 , "halo hop not implemented"
     assert num_parts > 0, "only handle >0 part(s)"
 
     os.makedirs(out_path, mode=0o775, exist_ok=True)
@@ -875,8 +875,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         num_nodes = vc_json['num_nodes']
         num_edges = vc_json['num_edges']
         start = time.time()
-        assert num_hops == 0, "halo hops not implemented"
-        vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method)
+        assert num_hops <= 1, "halo hops only support 1 for vertex partition"
+        vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method, num_hops)
         print('{}: splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
             part_method, time.time() - start, get_peak_mem()))
         _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json)
