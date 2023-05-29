@@ -6,6 +6,7 @@
 
 #include <dgl/base_heterograph.h>
 #include <dgl/packed_func_ext.h>
+#include <dgl/random.h>
 #include <dgl/runtime/parallel_for.h>
 
 #include "../heterograph.h"
@@ -14,6 +15,8 @@
 #include "../serialize/mmap_file.h"
 
 #include "vc.h"
+
+#include <climits>
 
 #if !defined(_WIN32)
 #include <GKlib.h>
@@ -376,22 +379,21 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 gid2rpids[d_vid].insert(pid);
             }
         }
-      } else if (strategy == "bfs"){
+      } else if (strategy == "vcbfs"){
         int N_BFS_SRC_NODES      = 1000;
         int N_BLOCK_NEIGHBOR_HOP = 2;
 
         // generate BFS source nodes
-        IdArray tmp = RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
+        IdArray tmp = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
               N_BFS_SRC_NODES, num_nodes, false);
-        CHECK_EQ(tmp->dtype.bits, 64) << "Only supports 64bits tensor for now";
-        const int64_t *src_nodes = static_cast<int64_t *>(tmp->data);
+        CHECK_EQ(tmp->dtype.bits, 32) << "Only supports 32bits tensor for now";
+        const int32_t *src_nodes = static_cast<int32_t *>(tmp->data);
         CHECK_EQ(tmp->shape[0], N_BFS_SRC_NODES);
 
-        std::vector<uint16_t> gid2bid(num_nodes, -1); //global node id to block id
+        std::vector<uint16_t> gid2bid(num_nodes, USHRT_MAX); //global node id to block id
         for(int i=0; i < N_BFS_SRC_NODES; i++){
             gid2bid[src_nodes[i]] = i;
         }
-
         // BFS
         bool converged = false;
         int iter_cnt = 0;
@@ -402,9 +404,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 s_vid = src[idx];
                 d_vid = dst[idx];
 
-                if(gid2bid[s_vid] != gid2bid[d_vid]){
+                if (gid2bid[s_vid] != gid2bid[d_vid]) {
                     converged = false;
                 }
+
                 //else if eq and bid==-1, those remain unlabeled
 
                 if ( gid2bid[s_vid] <= gid2bid[d_vid]){
@@ -415,12 +418,12 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
         // debugging info
-        int unlabeled_nodes = 0;
+        uint32_t unlabeled_nodes = 0;
         for(int i=0; i < num_nodes; i++){
-            if(gid2bid[i] == -1) unlabeled_nodes++;
+            if(gid2bid[i] == USHRT_MAX) unlabeled_nodes++;
         }
-        LOG(INFO) << "bfs takes    " << iter_cnt << " iter(s) to converge";
-        LOG(INFO) << "    #unlabel " << unlabeled_nodes << "(" << num_nodes << ")";
+        LOG(INFO) << "bfs takes   :" << iter_cnt << " iter(s) to converge";
+        LOG(INFO) << "    #unlabel:" << unlabeled_nodes << " (" << num_nodes << ")";
 
         //assign block to partition
         for (size_t idx=0; idx < num_edges; idx++){
@@ -454,7 +457,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf"){
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo);
-    }else if (strategy == "bfs"){
+    }else if (strategy == "vcbfs"){
         use_1_hop_halo = false;
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo);
     }else if (strategy == "randwalk"){
