@@ -290,6 +290,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       uint64_t extra_hops = args[5];
       bool use_1_hop_halo =  extra_hops > 0;
 
+      bool add_self_loop = false;
+      bool add_reverse_edge = false;
+
       LOG(INFO) << edge_bin_file_name << " " << num_edges << " " << num_parts << " " << strategy;
 
       dgl::serialize::MmapFile mf(edge_bin_file_name);
@@ -311,6 +314,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
+            if (add_self_loop){
+                if(s_vid == d_vid)
+                    continue;
+            }
             uint32_t pid = HashEdge(s_vid, d_vid) % num_parts;
             pid2src[pid].push_back(s_vid);
             pid2dst[pid].push_back(d_vid);
@@ -338,6 +345,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
+            if (add_self_loop){
+                if(s_vid == d_vid)
+                    continue;
+            }
             uint32_t pid = AsignEdgeToPartitionGreedy(s_vid, d_vid, dht[s_vid], dht[d_vid], part_num_edges, part_score);
             pid2src[pid].push_back(s_vid);
             pid2dst[pid].push_back(d_vid);
@@ -363,6 +374,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
+            if (add_self_loop){
+                if(s_vid == d_vid)
+                    continue;
+            }
             uint32_t pid = AsignEdgeToPartitionHDRF(s_vid, d_vid, dht[s_vid], dht[d_vid], degree_dht[s_vid], degree_dht[d_vid], part_num_edges, part_score);
             pid2src[pid].push_back(s_vid);
             pid2dst[pid].push_back(d_vid);
@@ -429,12 +444,11 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
-            uint32_t pid = 0;
-            if (gid2bid[s_vid] != -1) {
-                pid = HashEdge(gid2bid[s_vid], gid2bid[d_vid]) % num_parts;
-            } else {
-                pid = HashEdge(s_vid, d_vid) % num_parts;
+            if (add_self_loop){
+                if(s_vid == d_vid)
+                    continue;
             }
+            uint32_t pid = HashEdge(gid2bid[s_vid], gid2bid[d_vid]) % num_parts;
             pid2src[pid].push_back(s_vid);
             pid2dst[pid].push_back(d_vid);
             // in this sequential implementation,
@@ -456,10 +470,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     List<HeteroSubgraphRef> ret_list;
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf"){
-        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo);
+        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     }else if (strategy == "vcbfs"){
         use_1_hop_halo = false;
-        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo);
+        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     }else if (strategy == "randwalk"){
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
     }else{

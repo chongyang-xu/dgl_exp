@@ -195,7 +195,9 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                          std::vector<std::unordered_set<uint32_t>>& gid2rpids,
                          std::vector<std::shared_ptr<HeteroSubgraph>>& subgs,
                          uint64_t num_parts,
-                         bool use_1_hop_halo){
+                         bool use_1_hop_halo,
+                         bool add_self_loop,
+                         bool add_reverse_edge){
     char* dbg_str;
     uint32_t vc_debug_level = 0;
     if( (dbg_str = getenv("VC_DEBUG_LEVEL")) ){
@@ -379,13 +381,30 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
 #pragma omp barrier
             LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
 
+            // add reverse edge
+            if (add_reverse_edge) {
+                int old_size = pid2src.size();
+                pid2src[l_pid].resize(old_size + old_size);
+                pid2dst[l_pid].resize(old_size + old_size);
+                std::copy(pid2dst[l_pid].begin(), pid2dst[l_pid].begin() + old_size, pid2src[l_pid].begin() + old_size);
+                std::copy(pid2src[l_pid].begin(), pid2src[l_pid].begin() + old_size, pid2dst[l_pid].begin() + old_size);
+            }
+            // add self loop
+            if (add_self_loop) {
+                //self-loop was not added
+                int old_size = pid2src.size();
+                pid2src[l_pid].resize( old_size + induced_nodes.size() );
+                pid2dst[l_pid].resize( old_size + induced_nodes.size() );
+
+                for(int i=old_size; i < pid2src[l_pid].size(); i++){
+                    pid2src[l_pid][i]=i-old_size;
+                    pid2dst[l_pid][i]=i-old_size;
+                }
+            }
+
             //contruct sub graph with new id
             IdArray s_vids = aten::VecToIdArray(pid2src[l_pid]);
             IdArray d_vids = aten::VecToIdArray(pid2dst[l_pid]);
-
-            // add reverse edge
-
-            // add self loop
 
             aten::COOMatrix coo(induced_nodes.size(), induced_nodes.size(), s_vids, d_vids);
             HeteroGraphPtr subg = CreateFromCOO(1, coo, ALL_CODE);
