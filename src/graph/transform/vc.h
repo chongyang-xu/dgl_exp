@@ -203,8 +203,73 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
     if( (dbg_str = getenv("VC_DEBUG_LEVEL")) ){
         if(std::string(dbg_str) == "1"){
             vc_debug_level = 1;
+        }else if(std::string(dbg_str) == "2"){
+            vc_debug_level = 2;
         }
     }
+    if (vc_debug_level == 2) {
+        // count #replica of each node
+        std::unordered_map<uint64_t, uint64_t> node_freq_cnt;
+        for(int i=0; i <= num_parts; i++){
+            node_freq_cnt[i] = 0;
+        }
+        for(int i=0; i < gid2rpids.size(); i++){
+            uint64_t freq = gid2rpids[i].size() + 1;
+            node_freq_cnt[freq]++;
+        }
+        LOG(INFO) << "node #replica frequency histogram";
+        LOG(INFO) << "count \t freq";
+        for(auto p : node_freq_cnt){
+            LOG(INFO) << p.first <<" \t" << p.second;
+        }
+
+        // count union( #replica_u, #replica_v) of each edge
+        std::unordered_map<uint64_t, uint64_t> edge_freq_cnt_u_v;
+        std::unordered_map<uint64_t, uint64_t> edge_freq_cnt_u;
+        std::unordered_map<uint64_t, uint64_t> edge_freq_cnt_v;
+
+        for(int i=0; i <= num_parts; i++){
+            edge_freq_cnt_u_v[i] = 0;
+            edge_freq_cnt_u[i] = 0;
+            edge_freq_cnt_v[i] = 0;
+        }
+        for(int p=0; p < num_parts; p++){
+            auto& src = pid2src[p];
+            auto& dst = pid2dst[p];
+            std::unordered_set<uint64_t> union_pids;
+
+            for(int i=0; i < src.size(); i++){
+                auto u = src[i];
+                auto v = dst[i];
+                union_pids.clear();
+                union_pids.insert(get_mpid(vc_map[u]));
+                union_pids.insert(get_mpid(vc_map[v]));
+                for(auto pid : gid2rpids[u])    union_pids.insert(pid);
+                for(auto pid : gid2rpids[v])    union_pids.insert(pid);
+                edge_freq_cnt_u_v[union_pids.size()]++;
+                edge_freq_cnt_u[gid2rpids[u].size()+1]++;
+                edge_freq_cnt_v[gid2rpids[v].size()+1]++;
+            }
+        }
+        LOG(INFO) << "edge #union(replica_u, replica_v) frequency histogram";
+        LOG(INFO) << "count\tfreq";
+        for(auto p : edge_freq_cnt_u_v){
+            LOG(INFO) << p.first <<"\t" << p.second;
+        }
+        LOG(INFO) << "#edge replica_u frequency histogram";
+        LOG(INFO) << "count\tfreq";
+        for(auto p : edge_freq_cnt_u){
+            LOG(INFO) << p.first <<"\t" << p.second;
+        }
+        LOG(INFO) << "#edge replica_v frequency histogram";
+        LOG(INFO) << "count\tfreq";
+        for(auto p : edge_freq_cnt_v){
+            LOG(INFO) << p.first <<"\t" << p.second;
+        }
+    }
+    bool add_self_loop_only_main = true;
+    LOG(INFO) << "add_self_loop_only_main: " << add_self_loop_only_main;
+
     // a vector for all partitions, used for extend 1 hop neighbors
     //    in each partition: store for each remote partition, their 1_hop neighbor edges in this parition
     //     store src and dst seperately
@@ -223,7 +288,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             auto& dst_nodes = pid2dst[l_pid];
 
             {
-                if (vc_debug_level > 0 &&  l_pid == 0)
+                if (vc_debug_level == 1 &&  l_pid == 0)
                 for(int i=0; i < num_parts; i++){
                     int max_row = pid2src[i].size() > 10 ? 10: pid2src[i].size();
                     LOG(INFO) << "GID: Partition " << i;
@@ -312,7 +377,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
 
             }
             {
-                if (vc_debug_level > 0 && l_pid == 0){
+                if (vc_debug_level == 1 && l_pid == 0){
                     for(int i=0; i < num_parts; i++){
                         int max_row = pid2src[i].size() > 10 ? 10: pid2src[i].size();
                         LOG(INFO) << "Relabeled: Partition " << i;
@@ -370,7 +435,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             ////////////////////////////////////////////////////
 #pragma omp barrier
             {
-                if (vc_debug_level > 0 && l_pid == 0){
+                if (vc_debug_level == 1 && l_pid == 0){
                     int max_row = pid2src[0].size() > 10 ? 10: pid2src[0].size();
                     LOG(INFO) << "Extended Partition " << 0;
                     for(int j = 0; j < max_row; j++){

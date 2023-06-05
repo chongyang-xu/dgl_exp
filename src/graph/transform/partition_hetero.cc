@@ -315,8 +315,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             s_vid = src[idx];
             d_vid = dst[idx];
             if (add_self_loop){
-                if(s_vid == d_vid)
+                if(s_vid == d_vid){
                     continue;
+                }
             }
             uint32_t pid = HashEdge(s_vid, d_vid) % num_parts;
             pid2src[pid].push_back(s_vid);
