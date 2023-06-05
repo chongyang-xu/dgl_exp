@@ -229,7 +229,7 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
         sort_etypes = len(etypes) > 1
         _save_graphs(part_graph_file, [part], formats=graph_formats,
             sort_etypes=sort_etypes)
-    print('{}: splitting feature and save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
+    print('{}[2/2]: splitting feature and save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
         part_method, time.time() - start, get_peak_mem()))
 
     _dump_part_config(f'{out_path}/{graph_name}.json', part_metadata)
@@ -791,8 +791,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
     if num_parts == 1 and part_method[:2] != "vc":
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
-        print('Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
-            time.time() - start, get_peak_mem()))
+        print('{}[1/3]: Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
+            part_method, time.time() - start, get_peak_mem()))
         assert num_trainers_per_machine >= 1
         if num_trainers_per_machine > 1:
             # First partition the whole graph to each trainer and save the trainer ids in
@@ -804,8 +804,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                 balance_edges=balance_edges,
                 mode='k-way')
             _set_trainer_ids(g, sim_g, node_parts)
-            print('Assigning nodes to METIS partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
-                time.time() - start, get_peak_mem()))
+            print('{}[2/3]: Assigning nodes to METIS partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+                part_method, time.time() - start, get_peak_mem()))
 
         node_parts = F.zeros((sim_g.number_of_nodes(),), F.int64, F.cpu())
         parts = {0: sim_g.clone()}
@@ -832,8 +832,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         partition_with_reshuffle = True
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
-        print('Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
-            time.time() - start, get_peak_mem()))
+        print('{}[1/3]: Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
+            part_method, time.time() - start, get_peak_mem()))
         if part_method == 'metis':
             assert num_trainers_per_machine >= 1
             start = time.time()
@@ -855,15 +855,15 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                                                         balance_ntypes=balance_ntypes,
                                                         balance_edges=balance_edges,
                                                         objtype=objtype)
-            print('Assigning nodes to METIS partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
-                time.time() - start, get_peak_mem()))
+            print('{}[2/3]: Assigning nodes to METIS partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+                part_method, time.time() - start, get_peak_mem()))
         else:
             node_parts = random_choice(num_parts, sim_g.number_of_nodes())
         start = time.time()
         parts, orig_nids, orig_eids = partition_graph_with_halo(sim_g, node_parts, num_hops,
                                                                 reshuffle=partition_with_reshuffle)
-        print('Splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
-            time.time() - start, get_peak_mem()))
+        print('{}[3/3]: Splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+            part_method, time.time() - start, get_peak_mem()))
         if return_mapping:
             orig_nids, orig_eids = _get_orig_ids(g, sim_g, orig_nids, orig_eids)
     elif part_method[:2] == "vc":
@@ -877,7 +877,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         start = time.time()
         assert num_hops <= 1, "halo hops only support 1 for vertex partition"
         vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method, num_hops)
-        print('{}: splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+        print('{}[1/2]: splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
             part_method, time.time() - start, get_peak_mem()))
         _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json)
 
@@ -935,6 +935,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
     tot_num_inner_edges = 0
     out_path = os.path.abspath(out_path)
 
+    start = time.time()
     # With reshuffling, we can ensure that all nodes and edges are reshuffled
     # and are in contiguous ID space.
     if num_parts > 1:
@@ -987,6 +988,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         for etype in edge_map_val:
             val = np.concatenate([np.array(l) for l in edge_map_val[etype]])
             assert np.all(val[:-1] <= val[1:])
+    print('{}[DGL]: extra time : {:.3f} seconds, peak memory: {:.3f} GB'.format(
+        part_method, time.time() - start, get_peak_mem()))
 
     start = time.time()
     ntypes = {ntype:g.get_ntype_id(ntype) for ntype in g.ntypes}
@@ -1105,8 +1108,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         sort_etypes = len(g.etypes) > 1
         _save_graphs(part_graph_file, [part], formats=graph_formats,
             sort_etypes=sort_etypes)
-    print('Save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
-        time.time() - start, get_peak_mem()))
+    print('{}[4/4]:  Save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
+        part_method, time.time() - start, get_peak_mem()))
 
     _dump_part_config(f'{out_path}/{graph_name}.json', part_metadata)
 
