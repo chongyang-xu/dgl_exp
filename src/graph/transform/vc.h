@@ -448,22 +448,32 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
 
             // add reverse edge
             if (add_reverse_edge) {
-                int old_size = pid2src.size();
+                int old_size = pid2src[l_pid].size();
                 pid2src[l_pid].resize(old_size + old_size);
                 pid2dst[l_pid].resize(old_size + old_size);
+
                 std::copy(pid2dst[l_pid].begin(), pid2dst[l_pid].begin() + old_size, pid2src[l_pid].begin() + old_size);
                 std::copy(pid2src[l_pid].begin(), pid2src[l_pid].begin() + old_size, pid2dst[l_pid].begin() + old_size);
             }
             // add self loop
             if (add_self_loop) {
                 //self-loop was not added
-                int old_size = pid2src.size();
-                pid2src[l_pid].resize( old_size + induced_nodes.size() );
-                pid2dst[l_pid].resize( old_size + induced_nodes.size() );
+                if(add_self_loop_only_main){
+                    for (int i=0; i < induced_nodes.size(); i++) {
+                        if(get_mpid(induced_nodes[i]) == l_pid){
+                            pid2src[l_pid].push_back(i);
+                            pid2dst[l_pid].push_back(i);
+                        }
+                    }
+                } else {
+                    int old_size = pid2src[l_pid].size();
+                    pid2src[l_pid].resize( old_size + induced_nodes.size() );
+                    pid2dst[l_pid].resize( old_size + induced_nodes.size() );
 
-                for(int i=old_size; i < pid2src[l_pid].size(); i++){
-                    pid2src[l_pid][i]=i-old_size;
-                    pid2dst[l_pid][i]=i-old_size;
+                    for(int i=old_size; i < pid2src[l_pid].size(); i++){
+                        pid2src[l_pid][i]=i-old_size;
+                        pid2dst[l_pid][i]=i-old_size;
+                    }
                 }
             }
 

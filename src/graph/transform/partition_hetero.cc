@@ -290,7 +290,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       uint64_t extra_hops = args[5];
       bool use_1_hop_halo =  extra_hops > 0;
 
-      bool add_self_loop = false;
+      bool add_self_loop = true;
       bool add_reverse_edge = false;
 
       LOG(INFO) << edge_bin_file_name << " " << num_edges << " " << num_parts << " " << strategy;
