@@ -13,6 +13,8 @@
 #include <bitset>
 #include <cassert>
 
+#include "flat_hash_map.hpp"
+
 namespace dgl {
 namespace transform {
 
@@ -299,9 +301,16 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             }
 #pragma omp barrier
 
+            std::bitset<MAX_N_PARTITION> replicate2pids;
+            for(int i=0; use_1_hop_halo && i < num_parts; i++) {
+                remote_1_hop_edges_u[l_pid][i].reserve(src_nodes.size()/num_parts/8);
+                remote_1_hop_edges_v[l_pid][i].reserve(src_nodes.size()/num_parts/8);
+            }
+
             std::vector<vc_vid_t> induced_nodes;
+            induced_nodes.reserve(vc_map.size()/num_parts);
             //relabling
-            std::unordered_map<vc_vid_t, vc_vid_t> seen_vid_to_nid; //to new id in current partition
+            ska::flat_hash_map<vc_vid_t, vc_vid_t> seen_vid_to_nid; //to new id in current partition
             {
                 for(int idx=0; idx < src_nodes.size(); idx++){
                     vc_vid_t u = src_nodes[idx];
@@ -326,8 +335,10 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                         //      gid can be get from gid=induced_nodes[local_id],ndata[NID][local_id],ndata['node_feat'][local_id]
                         // 2) sampling across partition: not supported
                         //      edge-cut has inner nodes and outer nodes; vertex cut all nodes are inner
+                        src_nodes[idx] = induced_nodes.size()-1; // update local new id in place
+                    }else{
+                        src_nodes[idx] = it->second;
                     }
-                    src_nodes[idx] = seen_vid_to_nid[u]; // update local new id in place
 
                     it = seen_vid_to_nid.find(v);
                     if (it == seen_vid_to_nid.end()){
@@ -337,28 +348,27 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                         if (l_pid == get_mpid(vc_map[v])){
                             set_lid(vc_map[v], induced_nodes.size()-1);
                         }
+
+                        dst_nodes[idx] = induced_nodes.size()-1; // update local new id in place
+                    }else{
+                        dst_nodes[idx] = it->second;
                     }
-                    dst_nodes[idx] = seen_vid_to_nid[v]; // update local new id in place
 
                     //////////////////////////////////////////
                     // store 1 extra hop: BEGIN
                     //////////////////////////////////////////
-                    if (use_1_hop_halo){
-                        std::unordered_set<uint32_t> replicate2pids;
-                        replicate2pids.insert(get_mpid(vc_map[u]));
-                        replicate2pids.insert(get_mpid(vc_map[v]));
-                        auto u_rpids = gid2rpids[u];
-                        for(auto rpid : u_rpids){
-                            replicate2pids.insert(rpid);
-                        }
-                        auto v_rpids = gid2rpids[v];
-                        for(auto rpid : v_rpids){
-                            replicate2pids.insert(rpid);
-                        }
-                        for(auto rpid : replicate2pids){
-                            if (rpid == l_pid) continue;
-                            remote_1_hop_edges_u[l_pid][rpid].push_back(u);
-                            remote_1_hop_edges_v[l_pid][rpid].push_back(v);
+                    if (use_1_hop_halo) {
+                        replicate2pids.reset();
+                        replicate2pids.set(get_mpid(vc_map[u]));
+                        replicate2pids.set(get_mpid(vc_map[v]));
+                        for(auto rpid : gid2rpids[u])
+                            replicate2pids.set(rpid);
+                        for(auto rpid : gid2rpids[v])
+                            replicate2pids.set(rpid);
+                        for(int i = 0; i < num_parts; i++){
+                            if (i == l_pid || !replicate2pids[i]) continue;
+                            remote_1_hop_edges_u[l_pid][i].push_back(u);
+                            remote_1_hop_edges_v[l_pid][i].push_back(v);
                         }
                     }
                     //////////////////////////////////////////
@@ -401,35 +411,30 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                 auto& edge_src = remote_1_hop_edges_u[i][l_pid];
                 auto& edge_dst = remote_1_hop_edges_v[i][l_pid];
 
-                if (edge_src.size() != edge_dst.size()){
-                    LOG(FATAL) << "edge_src and edge_dst must have same length";
-                }
-                if (i == l_pid && edge_src.size() !=0 ){
-                    LOG(FATAL) << "edge_src and edge_dst must be empty";
-                }
-
                 for(int idx=0; idx < edge_src.size(); idx++){
-                    auto u = edge_src[idx];
-                    auto v = edge_dst[idx];
+                    const vc_vid_t u = edge_src[idx];
+                    const vc_vid_t v = edge_dst[idx];
 
                     auto it = seen_vid_to_nid.find(u);
                     if (it == seen_vid_to_nid.end()){
                         // just include 1 hop neighbor and treat them as inner node
                         induced_nodes.push_back(u);
                         seen_vid_to_nid[u] = induced_nodes.size()-1;
+                        // extends 1 hop neighbors into current partition
+                        pid2src[l_pid].push_back(induced_nodes.size()-1);
+                    }else{
+                        pid2src[l_pid].push_back(it->second);
                     }
-                    // extends 1 hop neighbors into current partition
-                    pid2src[l_pid].push_back(seen_vid_to_nid[u]);
-
                     it = seen_vid_to_nid.find(v);
                     if (it == seen_vid_to_nid.end()){
                         induced_nodes.push_back(v);
                         seen_vid_to_nid[v] = induced_nodes.size()-1;
+                        pid2dst[l_pid].push_back(induced_nodes.size()-1);
+                    }else{
+                        pid2dst[l_pid].push_back(it->second);
                     }
-                    pid2dst[l_pid].push_back(seen_vid_to_nid[v]);
                 }
             }
-
             ////////////////////////////////////////////////////
             //extend 1 hop neighbor: END
             ////////////////////////////////////////////////////
