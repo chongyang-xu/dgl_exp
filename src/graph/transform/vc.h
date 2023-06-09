@@ -460,7 +460,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                 //self-loop was not added
                 if(add_self_loop_only_main){
                     for (int i=0; i < induced_nodes.size(); i++) {
-                        if(get_mpid(induced_nodes[i]) == l_pid){
+                        if(get_mpid(vc_map[induced_nodes[i]]) == l_pid){
                             pid2src[l_pid].push_back(i);
                             pid2dst[l_pid].push_back(i);
                         }
