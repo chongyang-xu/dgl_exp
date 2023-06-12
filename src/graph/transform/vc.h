@@ -219,7 +219,7 @@ inline static uint32_t AsignEdgeToPartitionHDRF(
 void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pid2src,
                          std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pid2dst,
                          std::vector<vc_record_t>& vc_map,
-                         std::vector<std::unordered_set<uint32_t>>& gid2rpids,
+                         std::vector<ska::flat_hash_set<uint32_t>>& gid2rpids,
                          std::vector<std::shared_ptr<HeteroSubgraph>>& subgs,
                          uint64_t num_parts,
                          bool use_1_hop_halo,
@@ -263,7 +263,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
         for(int p=0; p < num_parts; p++){
             auto& src = pid2src[p];
             auto& dst = pid2dst[p];
-            std::unordered_set<uint64_t> union_pids;
+            ska::flat_hash_set<uint64_t> union_pids;
 
             for(int i=0; i < src.size(); i++){
                 auto u = src[i];

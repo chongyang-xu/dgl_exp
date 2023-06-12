@@ -304,7 +304,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       std::unordered_map<uint32_t, std::vector<vc_vid_t>> pid2src;
       std::unordered_map<uint32_t, std::vector<vc_vid_t>> pid2dst;
       std::vector<vc_record_t> vc_map(num_nodes, VCR_MPID_MASK);//must initialize part id as invalid
-      std::vector<std::unordered_set<uint32_t>> gid2rpids(num_nodes);
+      std::vector<ska::flat_hash_set<uint32_t>> gid2rpids(num_nodes);
 
       vc_vid_t* src = mf.AsUint32Ptr();
       vc_vid_t* dst = src + num_edges;
