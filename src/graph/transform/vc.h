@@ -474,7 +474,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                 }
             }
 #pragma omp barrier
-            LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
+            if (l_pid == 0) LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
 
             // add reverse edge
             if (add_reverse_edge) {
