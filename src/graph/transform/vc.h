@@ -12,8 +12,33 @@
 
 #include <bitset>
 #include <cassert>
+#include <ctime>  // for clock_gettime
 
 #include "flat_hash_map.hpp"
+
+
+inline int cur_ns(uint64_t* ns) {
+	  struct timespec cur;
+	    int ret = clock_gettime(CLOCK_REALTIME, &cur);
+	      *ns = cur.tv_sec * 1000000000 + cur.tv_nsec;
+	        return ret;
+}
+
+#define TIK(n)                  \
+	  uint64_t n##start, n##end;    \
+	    int n##start_ret, n##end_ret; \
+	      double __FILE__##n##_us;      \
+	        n##start_ret = cur_ns(&n##start)
+
+#define TOK(n)                                              \
+	  n##end_ret = cur_ns(&n##end);                             \
+	    if (n##start_ret != 0 || n##end_ret != 0) {               \
+		        std::cout << "clock_gettime error" << std::endl;        \
+		        throw 0;                                                \
+		      }                                                         \
+		        __FILE__##n##_us = (n##end - n##start) / 1000000.0;          \
+			  LOG(INFO) << "[Timer][" << #n << "][" \
+			              << __FILE__##n##_us << "][ms]"
 
 namespace dgl {
 namespace transform {
