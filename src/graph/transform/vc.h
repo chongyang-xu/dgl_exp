@@ -237,10 +237,10 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
     if (vc_debug_level == 2) {
         // count #replica of each node
         std::unordered_map<uint64_t, uint64_t> node_freq_cnt;
-        for(int i=0; i <= num_parts; i++){
+        for(uint64_t i=0; i <= num_parts; i++){
             node_freq_cnt[i] = 0;
         }
-        for(int i=0; i < gid2rpids.size(); i++){
+        for(uint64_t i=0; i < gid2rpids.size(); i++){
             uint64_t freq = gid2rpids[i].size() + 1;
             node_freq_cnt[freq]++;
         }
@@ -255,17 +255,17 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
         std::unordered_map<uint64_t, uint64_t> edge_freq_cnt_u;
         std::unordered_map<uint64_t, uint64_t> edge_freq_cnt_v;
 
-        for(int i=0; i <= num_parts; i++){
+        for(uint64_t i=0; i <= num_parts; i++){
             edge_freq_cnt_u_v[i] = 0;
             edge_freq_cnt_u[i] = 0;
             edge_freq_cnt_v[i] = 0;
         }
-        for(int p=0; p < num_parts; p++){
+        for(uint64_t p=0; p < num_parts; p++){
             auto& src = pid2src[p];
             auto& dst = pid2dst[p];
             ska::flat_hash_set<uint64_t> union_pids;
 
-            for(int i=0; i < src.size(); i++){
+            for(uint64_t i=0; i < src.size(); i++){
                 auto u = src[i];
                 auto v = dst[i];
                 union_pids.clear();
@@ -302,21 +302,21 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
     //     store src and dst seperately
     std::vector<std::vector<std::vector<vc_vid_t>>> remote_1_hop_edges_u;
     std::vector<std::vector<std::vector<vc_vid_t>>> remote_1_hop_edges_v;
-    for(int i = 0; i < num_parts; i++){
+    for(uint64_t i = 0; i < num_parts; i++){
         std::vector<std::vector<vc_vid_t>> t;
         t.resize(num_parts);
         remote_1_hop_edges_u.push_back(t);
         remote_1_hop_edges_v.push_back(t);
     }
 
-    runtime::parallel_for(0, num_parts, [&](int b, int e) {
+    runtime::parallel_for(0, num_parts, [&](uint64_t b, uint64_t e) {
        for (auto l_pid = b; l_pid < e; l_pid++) {
             auto& src_nodes = pid2src[l_pid];
             auto& dst_nodes = pid2dst[l_pid];
 
             {
                 if (vc_debug_level == 1 &&  l_pid == 0)
-                for(int i=0; i < num_parts; i++){
+                for(uint64_t i=0; i < num_parts; i++){
                     int max_row = pid2src[i].size() > 10 ? 10: pid2src[i].size();
                     LOG(INFO) << "GID: Partition " << i;
                     for(int j = 0; j < max_row; j++){
@@ -327,7 +327,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
 #pragma omp barrier
 
             std::bitset<MAX_N_PARTITION> replicate2pids;
-            for(int i=0; use_1_hop_halo && i < num_parts; i++) {
+            for(uint64_t i=0; use_1_hop_halo && i < num_parts; i++) {
                 remote_1_hop_edges_u[l_pid][i].reserve(src_nodes.size()/num_parts/8);
                 remote_1_hop_edges_v[l_pid][i].reserve(src_nodes.size()/num_parts/8);
             }
@@ -337,7 +337,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             //relabling
             ska::flat_hash_map<vc_vid_t, vc_vid_t> seen_vid_to_nid; //to new id in current partition
             {
-                for(int idx=0; idx < src_nodes.size(); idx++){
+                for(uint64_t idx=0; idx < src_nodes.size(); idx++){
                     vc_vid_t u = src_nodes[idx];
                     vc_vid_t v = dst_nodes[idx];
 
@@ -390,7 +390,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                             replicate2pids.set(rpid);
                         for(auto rpid : gid2rpids[v])
                             replicate2pids.set(rpid);
-                        for(int i = 0; i < num_parts; i++){
+                        for(uint64_t i = 0; i < num_parts; i++){
                             if (i == l_pid || !replicate2pids[i]) continue;
                             remote_1_hop_edges_u[l_pid][i].push_back(u);
                             remote_1_hop_edges_v[l_pid][i].push_back(v);
@@ -402,7 +402,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                 }
 
                 //assign each sigle node
-                for(int idx=l_pid; idx < vc_map.size(); idx+=num_parts){
+                for(uint64_t idx=l_pid; idx < vc_map.size(); idx+=num_parts){
                         if(get_mpid(vc_map[idx]) == VCR_MPID_MASK){
                             set_mpid(vc_map[idx], l_pid);
                             induced_nodes.push_back(idx);
@@ -413,16 +413,16 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             }
             {
                 if (vc_debug_level == 1 && l_pid == 0){
-                    for(int i=0; i < num_parts; i++){
-                        int max_row = pid2src[i].size() > 10 ? 10: pid2src[i].size();
+                    for(uint64_t i=0; i < num_parts; i++){
+                        uint64_t max_row = pid2src[i].size() > 10 ? 10: pid2src[i].size();
                         LOG(INFO) << "Relabeled: Partition " << i;
-                        for(int j = 0; j < max_row; j++){
+                        for(uint64_t j = 0; j < max_row; j++){
                             LOG(INFO) << "(" << pid2src[i][j] << ", " << pid2dst[i][j] << ")";
                         }
                     }
                     LOG(INFO) << "VCMap:";
-                    int max_row = vc_map.size() > 10 ? 10: vc_map.size();
-                    for(int i=0; i < vc_map.size(); i++){
+                    uint64_t max_row = vc_map.size() > 10 ? 10: vc_map.size();
+                    for(uint64_t i=0; i < max_row; i++){
                         LOG(INFO) << "gid: " << i << "\t lid: " << get_lid(vc_map[i]) <<"\t pid: " << get_mpid(vc_map[i]);
                     }
                 }
@@ -432,11 +432,11 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             //extend 1 hop neighbor: BEGIN
             ////////////////////////////////////////////////////
             bool enter_loop = use_1_hop_halo;
-            for(int i = 0; enter_loop && i < remote_1_hop_edges_u.size(); i++){
+            for(uint64_t i = 0; enter_loop && i < remote_1_hop_edges_u.size(); i++){
                 auto& edge_src = remote_1_hop_edges_u[i][l_pid];
                 auto& edge_dst = remote_1_hop_edges_v[i][l_pid];
 
-                for(int idx=0; idx < edge_src.size(); idx++){
+                for(uint64_t idx=0; idx < edge_src.size(); idx++){
                     const vc_vid_t u = edge_src[idx];
                     const vc_vid_t v = edge_dst[idx];
 
@@ -489,7 +489,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
             if (add_self_loop) {
                 //self-loop was not added
                 if(add_self_loop_only_main){
-                    for (int i=0; i < induced_nodes.size(); i++) {
+                    for (uint64_t i=0; i < induced_nodes.size(); i++) {
                         if(get_mpid(vc_map[induced_nodes[i]]) == l_pid){
                             pid2src[l_pid].push_back(i);
                             pid2dst[l_pid].push_back(i);
@@ -500,7 +500,7 @@ void ConstructVCSubGraph(std::unordered_map<uint32_t, std::vector<vc_vid_t>>& pi
                     pid2src[l_pid].resize( old_size + induced_nodes.size() );
                     pid2dst[l_pid].resize( old_size + induced_nodes.size() );
 
-                    for(int i=old_size; i < pid2src[l_pid].size(); i++){
+                    for(uint64_t i=old_size; i < pid2src[l_pid].size(); i++){
                         pid2src[l_pid][i]=i-old_size;
                         pid2dst[l_pid][i]=i-old_size;
                     }
