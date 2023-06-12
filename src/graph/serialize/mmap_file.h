@@ -34,6 +34,9 @@ struct MmapFile {
   inline uint32_t* AsUint32Ptr() {
     return reinterpret_cast<uint32_t*>(data_ptr);
   }
+  inline uint8_t* AsUint8Ptr() {
+    return reinterpret_cast<uint8_t*>(data_ptr);
+  }
   inline size_t GetLength() { return len; }
 
  private:

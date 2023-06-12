@@ -69,7 +69,10 @@ def prepare_dataset_for_vc(args, ori_ds_path):
         ds_full_name = 'ogbn_papers100M'
 
         raw_path = "{}/{}/raw".format(ori_ds_path, ds_full_name)
+        split_path = "{}/{}/split/time".format(ori_ds_path, ds_full_name)
+
         label_file = os.path.join(raw_path, "node-label.npz")
+        train_mask_file = os.path.join(split_path, "train.csv.gz")
         data_file = os.path.join(raw_path, "data.npz")
 
         vc_json_file = "{}/vc_ogbpa.json".format(raw_path)
@@ -86,6 +89,15 @@ def prepare_dataset_for_vc(args, ori_ds_path):
             print(node_label[item])
             print("{}: shape:{}, dtype:{}".format(item, node_label[item].flatten().shape, node_label[item].dtype))
             node_label[item].flatten().tofile(node_label_file_bin)
+
+        print(f"loading {train_mask_file}")
+        train_idx = th.as_tensor(pd.read_csv(train_mask_file, compression='gzip', header = None).values.T[0]).to(th.long) # (num_graph, ) python list
+        train_mask = th.zeros((num_node_list[0],), dtype=th.bool)
+        train_mask[train_idx] = True
+        num_train_nodes = train_idx.shape[0]
+        print(f"train_mask: shape={train_mask.shape}, dtype={train_mask.dtype}, num_train_nodes={num_train_nodes}")
+        train_mask_file_bin=f"{split_path}/train_mask.bin"
+        train_mask.numpy().tofile(train_mask_file_bin)
 
         data_dict=np.load(data_file, mmap_mode='r')
         num_nodes_list = data_dict['num_nodes_list']
@@ -113,20 +125,25 @@ def prepare_dataset_for_vc(args, ori_ds_path):
         vc_json['node_label_file'] = node_label_file_bin
         vc_json['edge_file_bin'] = edge_file_bin
         vc_json['node_feats_file_bin'] = node_feats_file_bin
-        split_file_path = "{}/{}/split/time".format(ori_ds_path, ds_full_name)
-        vc_json['split_file_path'] = split_file_path
+        vc_json['split_file_path'] = split_path
         vc_json['num_nodes'] = num_nodes_list[0]
         vc_json['num_edges'] = num_edges_list[0]
         vc_json['feat_dim'] = node_feat_dim
+        vc_json['train_mask_file_bin'] = train_mask_file_bin
+        vc_json['num_train_nodes'] = num_train_nodes
 
         with open(vc_json_file, 'w+') as f:
-            json.dump(vc_json, f)
+            vc_json = json.load(vc_json)
+            json.dump(vc_json, f, indent=4)
         return vc_json_file
     if args.dataset == "ogbpr":
         ds_full_name = 'ogbn_products'
 
         raw_path = "{}/{}/raw".format(ori_ds_path, ds_full_name)
+        split_path = "{}/{}/split/sales_ranking".format(ori_ds_path, ds_full_name)
+
         label_file = os.path.join(raw_path, "node-label.csv.gz")
+        train_mask_file = os.path.join(split_path, "train.csv.gz")
         edge_file = os.path.join(raw_path, "edge.csv.gz")
         feat_file = os.path.join(raw_path, "node-feat.csv.gz")
         num_node_list_file = os.path.join(raw_path, "num-node-list.csv.gz")
@@ -160,18 +177,29 @@ def prepare_dataset_for_vc(args, ori_ds_path):
         node_feat.tofile(node_feats_file_bin)
         print("node_feat.shape:{}, dtype:{}".format(node_feat.shape, node_feat.dtype))
 
+        print(f"loading {train_mask_file}")
+        train_idx = th.as_tensor(pd.read_csv(train_mask_file, compression='gzip', header = None).values.T[0]).to(th.long) # (num_graph, ) python list
+        train_mask = th.zeros((num_node_list[0],), dtype=th.bool)
+        train_mask[train_idx] = True
+        num_train_nodes = train_idx.shape[0]
+        print(f"train_mask: shape={train_mask.shape}, dtype={train_mask.dtype}, num_train_nodes={num_train_nodes}")
+        train_mask_file_bin=f"{split_path}/train_mask.bin"
+        train_mask.numpy().tofile(train_mask_file_bin)
+
         vc_json = {}
         vc_json['node_label_file'] = node_label_file_bin
         vc_json['edge_file_bin'] = edge_file_bin
         vc_json['node_feats_file_bin'] = node_feats_file_bin
-        split_file_path = "{}/{}/split/sales_ranking".format(ori_ds_path, ds_full_name)
-        vc_json['split_file_path'] = split_file_path
+        vc_json['split_file_path'] = split_path
         vc_json['num_nodes'] = num_node_list[0]
         vc_json['num_edges'] = num_edge_list[0]
         vc_json['feat_dim'] = node_feat.shape[1]
+        vc_json['train_mask_file_bin'] = train_mask_file_bin
+        vc_json['num_train_nodes'] = num_train_nodes
 
         with open(vc_json_file, 'w+') as f:
-            json.dump(vc_json, f)
+            vc_json = json.load(vc_json)
+            json.dump(vc_json, f, indent=4)
         return vc_json_file
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))

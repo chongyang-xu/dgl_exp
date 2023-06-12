@@ -288,6 +288,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       uint64_t num_parts = args[3];
       std::string strategy = args[4];
       uint64_t extra_hops = args[5];
+      uint64_t num_train_nodes = args[6];
+      std::string train_mask_file = args[7];
+
       bool use_1_hop_halo =  extra_hops > 0;
 
       bool add_self_loop = true;
@@ -396,71 +399,254 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
       } else if (strategy == "vcbfs"){
-        int N_BFS_SRC_NODES      = 1000;
-        int N_BLOCK_NEIGHBOR_HOP = 2;
-
+        const int N_BFS_SRC_NODES      = num_nodes / 1000;
+        const int N_BLOCK_NEIGHBOR_HOP = 2;
+        const int N_BLOCK_MAX = 100000;
+        LOG(INFO) << "bfs #src_cnt:" << N_BFS_SRC_NODES;
+        LOG(INFO) << "bfs #blk_max:" << N_BLOCK_MAX;
         // generate BFS source nodes
-        IdArray tmp = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
+        IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
               N_BFS_SRC_NODES, num_nodes, false);
-        CHECK_EQ(tmp->dtype.bits, 32) << "Only supports 32bits tensor for now";
-        const int32_t *src_nodes = static_cast<int32_t *>(tmp->data);
-        CHECK_EQ(tmp->shape[0], N_BFS_SRC_NODES);
+        CHECK_EQ(random_source_nodes->dtype.bits, 32) << "Only supports 32bits tensor for now";
+        const int32_t *src_nodes = static_cast<int32_t *>(random_source_nodes->data);
+        CHECK_EQ(random_source_nodes->shape[0], N_BFS_SRC_NODES);
 
-        std::vector<uint16_t> gid2bid(num_nodes, USHRT_MAX); //global node id to block id
-        for(int i=0; i < N_BFS_SRC_NODES; i++){
-            gid2bid[src_nodes[i]] = i;
+        std::vector<uint8_t> is_train;
+        {
+            dgl::serialize::MmapFile tm(train_mask_file);
+            CHECK_EQ(tm.GetLength(), num_nodes) << "file size doesn't match train nodes numer";
+            std::vector<uint8_t> tmp(tm.AsUint8Ptr(), tm.AsUint8Ptr() + num_nodes);
+            is_train = std::move(tmp);
         }
-        // BFS
+
+        /////////////////////////////////////////////////////////
+        ////  multi-source BFS, the graph is treated as directed
+        /////////////////////////////////////////////////////////
+        TIK(vcbfs);
+        std::vector<vc_bid_t> gid2bid(num_nodes, VC_BID_MAX); // global node id to block id
+        std::vector<bool> vst(num_nodes, false);   // count node number for each block
+        std::vector<uint32_t> bid2cnt(N_BFS_SRC_NODES, 0);   // count node number for each block
+        std::vector<uint32_t> bid2train_cnt(N_BFS_SRC_NODES, 0);
+        ska::flat_hash_set<vc_vid_t> cur;
+        ska::flat_hash_set<vc_vid_t> next;
+        // initialize
+        for(int i=0; i < N_BFS_SRC_NODES; i++){
+            bid2cnt[i] = 1;
+            vst[src_nodes[i]] = true;
+            gid2bid[src_nodes[i]] = i;
+            next.insert(src_nodes[i]);
+            bid2train_cnt[i] = is_train[src_nodes[i]] ? 1 : 0;
+        }
+        // #iter: num pass of full edge list
         bool converged = false;
-        int iter_cnt = 0;
+        uint32_t iter_cnt = 0;
         while(!converged){
-            iter_cnt++;
             converged = true;
-            for (size_t idx=0; idx < num_edges; idx++){
+            iter_cnt++;
+            cur = std::move(next);
+            for (size_t idx = 0; idx < num_edges; idx++) {
                 s_vid = src[idx];
+                auto iter = cur.find(s_vid);
+                if (iter == cur.end()) continue;
                 d_vid = dst[idx];
-
-                if (gid2bid[s_vid] != gid2bid[d_vid]) {
+                auto bid = gid2bid[s_vid];
+                if (vst[d_vid] == false && bid2cnt[bid]  < N_BLOCK_MAX){
+                    vst[d_vid] = true;
+                    bid2cnt[bid]++;
                     converged = false;
-                }
-
-                //else if eq and bid==-1, those remain unlabeled
-
-                if ( gid2bid[s_vid] <= gid2bid[d_vid]){
-                    gid2bid[d_vid] = gid2bid[s_vid];
-                }else{
-                    gid2bid[s_vid] = gid2bid[d_vid];
+                    gid2bid[d_vid] = bid;
+                    bid2train_cnt[bid] += is_train[d_vid] ? 1:0;
+                    next.insert(d_vid);
                 }
             }
         }
-        // debugging info
-        uint32_t unlabeled_nodes = 0;
-        for(int i=0; i < num_nodes; i++){
-            if(gid2bid[i] == USHRT_MAX) unlabeled_nodes++;
+        {
+            cur.clear();
+            next.clear();
+            vst.clear();
         }
-        LOG(INFO) << "bfs takes   :" << iter_cnt << " iter(s) to converge";
-        LOG(INFO) << "    #unlabel:" << unlabeled_nodes << " (" << num_nodes << ")";
+        // fix 1)
+        // due to N_BLOCK_MAX, an edge has exactly one node visited, in this case,
+        // merge unvisited nodes to its neighbor, regardless of direction
+        converged = false;
+        while (!converged) {
+            converged = true;
+            iter_cnt++;
+            for(size_t idx = 0; idx < num_edges; idx++){
+                s_vid = src[idx];
+                d_vid = dst[idx];
 
-        //assign block to partition
+                vc_vid_t old, nbr;
+                if (vst[s_vid] ^ vst[d_vid]){
+                    converged = false;
+                    if(vst[s_vid]){
+                        old = s_vid;
+                        nbr = d_vid;
+                    }else{
+                        old = d_vid;
+                        nbr = s_vid;
+                    }
+                    vst[nbr] = true;
+                    bid2cnt[gid2bid[old]]++;
+                    bid2train_cnt[gid2bid[old]] += is_train[nbr] ? 1:0;
+                    gid2bid[nbr] = gid2bid[old];
+                    /*
+                    After this merging, it's possible that an edge has both nodes visited but assigned in different block
+                    o--o|x|
+                        \
+                        o
+                        \
+                        |x|o--o
+                    */
+                }
+            }
+        }
+
+        ska::flat_hash_set<vc_vid_t> unlabeled_node;
+        std::vector<ska::flat_hash_set<vc_bid_t>> co_adj(N_BFS_SRC_NODES);
+        // after handling fix 1), now fix 2) and in-place graph coarsening
+        // fix 2): for edges both nodes are not visited, they are not connected by bfs_soure,
+        // randomly assign unvisited edge, regardless of direction
+        for(size_t idx = 0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            auto& u = gid2bid[s_vid]; 
+            auto& v = gid2bid[d_vid];
+            if( !vst[d_vid] && !vst[s_vid] /* vst and VC_BID_MAX are both needed */) {
+                if (u != VC_BID_MAX && v == VC_BID_MAX){ // VC_BID_MAX is used as flag for visit
+                    v = u;
+                    bid2cnt[u]++;
+                    bid2train_cnt[u] += is_train[d_vid] ? 1:0;
+                } else if (u == VC_BID_MAX && v != VC_BID_MAX){
+                    u = v;
+                    bid2cnt[v]++;
+                    bid2train_cnt[v] += is_train[s_vid] ? 1:0;
+                } else if (gid2bid[s_vid] == VC_BID_MAX && gid2bid[d_vid] == VC_BID_MAX){
+                    auto m = HashEdge(s_vid, d_vid) % N_BFS_SRC_NODES;
+                    u = v = m;
+                    bid2cnt[m]+=2;
+                    bid2train_cnt[m] += is_train[s_vid] ? 1:0;
+                    bid2train_cnt[m] += is_train[d_vid] ? 1:0;
+                } else { }
+                // debugging info
+                unlabeled_node.insert(s_vid);
+                unlabeled_node.insert(d_vid);
+            } else if ( vst[d_vid] ^ vst[s_vid] ){
+                LOG(FATAL) << "should not reach here";
+            }
+            ////////////////////////
+            // in-place coarsening
+            ////////////////////////
+            if(u != v){
+                co_adj[u].insert(v); //remove duplicated edge
+            }
+        }
+        //debug info
+        uint32_t co_edge_n = 0;
+        for(uint64_t i=0; i < co_adj.size(); i++)
+            co_edge_n += co_adj[i].size();
+        // merging small blk to bigger
+        // pass
+        LOG(INFO) << "bfs takes   :" << iter_cnt+1 << " iter(s) to converge";
+        LOG(INFO) << "bfs #unlabel:" << unlabeled_node.size() << " (" << num_nodes << ") randomly assigned";
+        LOG(INFO) << "bfs #co_edge:" << co_edge_n << " (deg_avg = " << co_edge_n/N_BFS_SRC_NODES << ")";
+        TOK(vcbfs);
+
+        ///////////////////////////////////////
+        ////   assign block to partition
+        ///////////////////////////////////////
+        TIK(assign_blk);
+        std::vector<double> pid2cnt(num_parts, 0.0); 
+        std::vector<double> pid2train_cnt(num_parts, 0.0); 
+        std::vector<uint32_t> bid2pid(N_BFS_SRC_NODES);
+        double part_c  = (num_nodes + num_parts ) / num_parts; //  partition nodes capacity
+        double part_ct = (num_train_nodes + num_parts ) / num_parts; // partition train nodes capacity
+
+        std::vector<double> pid2score(num_parts, 0.0); 
+        std::vector<ska::flat_hash_set<vc_bid_t>> pid2bids(num_parts);
+
+        if (N_BLOCK_NEIGHBOR_HOP != 2) LOG(FATAL) << "only support N_BLOCK_NEIGHBOR_HOP = 2";
+        for (size_t bidx=0; bidx < co_adj.size(); bidx++){
+            double max_score = 0.0;    
+            uint32_t pid = bidx % num_parts;
+            for(uint64_t pidx = 0; pidx < num_parts; pidx++){
+                uint32_t k = 0;
+                {// find num of intersect
+                    auto p_i = pid2bids[pidx];
+                    ska::flat_hash_set<vc_bid_t> vst;
+                    for(auto t: co_adj[bidx]){
+                        if(vst.find(t) == vst.end()){
+                            vst.insert(t);
+                            k += p_i.find(t) != p_i.end() ? 1 : 0; 
+                        }
+                        for(auto q: co_adj[t]){
+                            if(vst.find(q) == vst.end()){
+                                vst.insert(q);
+                                k += p_i.find(q) != p_i.end() ? 1 : 0; 
+                            }
+                        }
+                    }
+                }
+                double score = k * ( 1 - pid2train_cnt[pidx]/part_ct) * ( 1 - pid2cnt[pidx]/part_c);
+                if (score > max_score){
+                    max_score = score;
+                    pid = pidx;
+                }
+            }
+            pid2cnt[pid] += bid2cnt[bidx];
+            pid2train_cnt[pid] += bid2train_cnt[bidx];
+            pid2bids[pid].insert(bidx);
+            bid2pid[bidx] = pid;
+            // LOG(INFO) << "bid=" << bidx << " => " << "pid=" << pid;
+        }
+        TOK(assign_blk);
+        ////////////////////////////////
+        // uncoarsening
+        ////////////////////////////////
+        TIK(uncoarsening);
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
             if (add_self_loop){
-                if(s_vid == d_vid)
+                if(s_vid == d_vid){
                     continue;
+                }
             }
-            uint32_t pid = HashEdge(gid2bid[s_vid], gid2bid[d_vid]) % num_parts;
-            pid2src[pid].push_back(s_vid);
-            pid2dst[pid].push_back(d_vid);
-            // in this sequential implementation,
-            // assign main part_id when a node shows up for the first time
+            // 1 node => 1 block => 1 partition
+            auto a = gid2bid[s_vid];
+            auto b = gid2bid[d_vid];
+            uint32_t pid_u, pid_v;
+            if (a == b){
+                pid_u = pid_v = bid2pid[a];
+            }else{
+                pid_u = bid2pid[a];
+                pid_v = bid2pid[b];
+            }
+
             if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK){
-                set_mpid(vc_map[s_vid], pid);
+               set_mpid(vc_map[s_vid], pid_u);
             }
             if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK){
-                set_mpid(vc_map[d_vid], pid);
+                set_mpid(vc_map[d_vid], pid_v);
+            }
+
+            if (pid_u == pid_v ){
+                pid2src[pid_u].push_back(s_vid);
+                pid2dst[pid_u].push_back(d_vid);
+            }else{
+                // if this edge is cutted, drop it
+                // if use_1_hop_halo, replicate edge to destination nodes
+                if(use_1_hop_halo){
+                    pid2src[pid_u].push_back(s_vid);
+                    pid2dst[pid_u].push_back(d_vid);
+                    //pid2src[pid_v].push_back(s_vid);
+                    //pid2dst[pid_v].push_back(d_vid);
+                }
             }
         }
+        TOK(uncoarsening);
+        use_1_hop_halo = false;
+        LOG(INFO) << "vcbs: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
       } else if (strategy == "randwalk"){
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
       } else {
@@ -473,7 +659,6 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf"){
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     }else if (strategy == "vcbfs"){
-        use_1_hop_halo = false;
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     }else if (strategy == "randwalk"){
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;

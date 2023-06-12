@@ -46,7 +46,9 @@ namespace transform {
 // NOTE(ds4gnn)
 using vc_record_t=uint64_t;
 using vc_vid_t=uint32_t;
+using vc_bid_t=uint16_t;
 
+#define VC_BID_MAX USHRT_MAX
 #define VCR_MPID_MASK (0xFFFF)
 inline vc_record_t set_mpid (vc_record_t& r, uint32_t pid){
     r &= ~VCR_MPID_MASK;

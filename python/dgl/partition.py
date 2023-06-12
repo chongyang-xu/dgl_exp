@@ -259,8 +259,8 @@ def partition_graph_with_halo(g, node_part, extra_cached_hops, reshuffle=False):
         return subg_dict, None, None
 
 def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts,
-                                        strategy, extra_cached_hops=0, reshuffle=False
-                                        ):
+                                        strategy, extra_cached_hops=0, reshuffle=False,
+                                        num_train_nodes=0, train_mask_file=None):
     """Partition a graph by cutting vertex.
 
     Parameters
@@ -309,7 +309,9 @@ def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, nu
         num_edges,
         num_parts,
         strategy,
-        extra_cached_hops
+        extra_cached_hops,
+        num_train_nodes,
+        train_mask_file
     )
 
     vc_map = subgs[0].vc_map
