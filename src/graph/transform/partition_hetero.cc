@@ -646,10 +646,99 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
         TOK(uncoarsening);
-        use_1_hop_halo = false;
-        LOG(INFO) << "vcbs: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
-      } else if (strategy == "randwalk"){
-        LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
+      } else if (strategy == "vcrw") {
+        TIK(vcrw);
+        const uint64_t N_RW_SRC_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
+        const uint64_t N_DEPTH = 3;
+        const uint64_t N_RW_PART_MAX = 2 * (num_nodes+N_RW_SRC_NODES) / N_RW_SRC_NODES;
+        std::vector<std::vector<uint32_t>> fanout = {
+            {0},
+            {10},
+            {20, 10},
+            {30, 20, 10 },
+            {40, 30, 20, 10},
+            {50, 40, 30, 20, 10},
+            {60, 50, 40, 30, 20, 10}
+        };
+        LOG(INFO) << "rw  #src_cnt  : " << N_RW_SRC_NODES;
+        LOG(INFO) << "rw  #depth    : " << N_DEPTH;
+        LOG(INFO) << "bfs #part_max : " << N_RW_PART_MAX;
+        // generate BFS source nodes
+        IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
+              N_RW_SRC_NODES, num_nodes, false);
+        CHECK_EQ(random_source_nodes->dtype.bits, 32) << "Only supports 32bits tensor for now";
+        const int32_t *src_nodes = static_cast<int32_t *>(random_source_nodes->data);
+        CHECK_EQ(random_source_nodes->shape[0], N_RW_SRC_NODES);
+
+        std::vector<ska::flat_hash_map<vc_vid_t, std::vector<vc_vid_t>>> pid2vid2cur(num_parts);
+        std::vector<ska::flat_hash_map<vc_vid_t, uint32_t>> pid2vid2cnt(num_parts);
+        std::vector<ska::flat_hash_set<vc_vid_t>> pid2next(num_parts);
+
+        // assign source nodes to paritions randomly
+        for(uint64_t i=0; i < N_RW_SRC_NODES; i++){
+            pid2next[src_nodes[i]%num_parts].insert(src_nodes[i]);
+            if(get_mpid(vc_map[src_nodes[i]]) == VCR_MPID_MASK){
+               set_mpid(vc_map[src_nodes[i]], src_nodes[i] % num_parts);
+            }
+        }
+
+        for(uint64_t d = 0; d < N_DEPTH; d++){
+            // initialize by clear and assign
+            for(uint32_t pidx=0; pidx < num_parts; pidx++) {
+                pid2vid2cur[pidx].clear();
+                for(auto vid : pid2next[pidx]){
+                    // fill self vid as default neighbor
+                    std::vector<vc_vid_t> t;
+                    t.reserve(fanout[N_DEPTH][d]);
+                    pid2vid2cur[pidx][vid] = std::move(t);
+                    pid2vid2cnt[pidx][vid] = 0;
+                }
+                pid2next[pidx].clear();
+            }
+            // sampling neighbor from edge stream
+            for (size_t idx=0; idx < num_edges; idx++){
+                s_vid = src[idx];
+                d_vid = dst[idx];
+
+                for(uint32_t pidx=0; pidx < num_parts; pidx++){
+                    auto& vid2cur = pid2vid2cur[pidx];
+                    auto& vid2cnt = pid2vid2cnt[pidx];
+                    auto iter = vid2cur.find(s_vid);
+                    if (iter != vid2cur.end()){
+                        vid2cnt[s_vid]++;
+                        if(vid2cnt[s_vid] <= fanout[N_DEPTH][d]){
+                            vid2cur[s_vid].push_back(d_vid);
+                            pid2next[pidx].insert(d_vid);
+                        }else{
+                            uint32_t r = dgl::RandomEngine::ThreadLocal()->RandInt(1000000000) % vid2cnt[s_vid];
+                            if(r < fanout[N_DEPTH][d]){
+                                vid2cur[s_vid][r] = d_vid;
+                                pid2next[pidx].erase(vid2cur[s_vid][r]);
+                                pid2next[pidx].insert(d_vid);
+                            }
+                        }
+                    }
+                }
+            }
+            // assign sampled edge to each partition
+            for(uint32_t pidx=0; pidx < num_parts; pidx++){
+                auto& vid2cur = pid2vid2cur[pidx];
+                for(auto p : vid2cur){
+                    // best effort main partition assignment
+                    if(get_mpid(vc_map[p.first]) == VCR_MPID_MASK){
+                        set_mpid(vc_map[p.first], pidx);
+                    }
+                    for(auto v: p.second){ // coo, has duplicated edge
+                        pid2src[pidx].push_back(p.first);
+                        pid2dst[pidx].push_back(v);
+                        if(get_mpid(vc_map[v]) == VCR_MPID_MASK){
+                            set_mpid(vc_map[v], pidx);
+                        }
+                    }
+                }
+            }
+        }
+        TOK(vcrw);
       } else {
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
       }
@@ -663,9 +752,11 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         use_1_hop_halo = false;
         LOG(INFO) << "vcbfs: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
-    }else if (strategy == "randwalk"){
-        LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
-    }else{
+    } else if (strategy == "vcrw"){
+        use_1_hop_halo = false;
+        LOG(INFO) << "vcrw: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
+        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
+    } else{
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
     }
 
