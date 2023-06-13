@@ -400,9 +400,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
       } else if (strategy == "vcbfs"){
-        const int N_BFS_SRC_NODES      = num_nodes / 1000;
+        const int N_BFS_SRC_NODES      = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const int N_BLOCK_NEIGHBOR_HOP = 2;
-        const int N_BLOCK_MAX = 100000;
+        const int N_BLOCK_MAX          = 2 * (num_nodes+N_BFS_SRC_NODES) / N_BFS_SRC_NODES;
         LOG(INFO) << "bfs #src_cnt:" << N_BFS_SRC_NODES;
         LOG(INFO) << "bfs #blk_max:" << N_BLOCK_MAX;
         // generate BFS source nodes
@@ -659,7 +659,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf"){
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
-    }else if (strategy == "vcbfs"){
+    } else if (strategy == "vcbfs"){
+        use_1_hop_halo = false;
+        LOG(INFO) << "vcbfs: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     }else if (strategy == "randwalk"){
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
