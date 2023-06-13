@@ -305,8 +305,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
 
       // a SEQUENTIAL vertex cut implementation, with few optimization
       // construct each partitions edge list in original vid
-      std::unordered_map<uint32_t, std::vector<vc_vid_t>> pid2src;
-      std::unordered_map<uint32_t, std::vector<vc_vid_t>> pid2dst;
+      ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> pid2src;
+      ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> pid2dst;
       std::vector<vc_record_t> vc_map(num_nodes, VCR_MPID_MASK);//must initialize part id as invalid
       std::vector<ska::flat_hash_set<uint32_t>> gid2rpids(num_nodes);
 
