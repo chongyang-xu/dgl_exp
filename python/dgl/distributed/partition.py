@@ -876,11 +876,12 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         num_edges = vc_json['num_edges']
         train_mask_bin = vc_json['train_mask_file_bin']
         num_train_nodes = vc_json['num_train_nodes']
+        add_rev_edge = vc_json['add_reverse_edge']
 
         start = time.time()
         assert num_hops <= 1, "halo hops only support 1 for vertex partition"
         vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method, num_hops, reshuffle=False,
-                                                                    num_train_nodes=num_train_nodes, train_mask_file=train_mask_bin)
+                                                                    num_train_nodes=num_train_nodes, train_mask_file=train_mask_bin, add_rev_edge=add_rev_edge)
         print('{}[1/2]: splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
             part_method, time.time() - start, get_peak_mem()))
         _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json)
