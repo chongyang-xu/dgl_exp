@@ -97,11 +97,12 @@ bool SaveHeteroGraphs(
   // And label dict
   fs->Write(gdata_start_pos);
   fs->Write(labels_blob.c_str(), labels_blob.size());
-
+  LOG(INFO) << "SaveHeteroGraphs::labels_blob.size() " << labels_blob.size();
   std::vector<uint64_t> graph_indices(num_graph);
 
   // Write HeteroGraphData
   for (uint64_t i = 0; i < num_graph; ++i) {
+    LOG(INFO) << "SaveHeteroGraphs::gdata " << i;
     graph_indices[i] = fs->Count();
     auto gdata = hdata[i].sptr();
     fs->Write(gdata);
@@ -116,7 +117,7 @@ bool SaveHeteroGraphs(
   uint64_t indptr_buffer_size = indptr_blob.size();
   fs->Write(indptr_blob);
   fs->Write(indptr_buffer_size);
-
+  LOG(INFO) << "indptr_buffer_size " << indptr_buffer_size;
   return true;
 }
 

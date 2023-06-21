@@ -97,6 +97,12 @@ struct CSRMatrix {
   }
 
   void Save(dmlc::Stream* fs) const {
+    LOG(INFO) << "CSRMatrix::Save num_cols " << num_cols;
+    LOG(INFO) << "CSRMatrix::Save num_rows " << num_rows;
+    LOG(INFO) << "CSRMatrix::Save indptr "   << indptr.GetSize();
+    LOG(INFO) << "CSRMatrix::Save indices "  << indices.GetSize();
+    LOG(INFO) << "CSRMatrix::Save data "     << data.GetSize();
+    LOG(INFO) << "CSRMatrix::Save sorted "   << sorted;
     fs->Write(kDGLSerialize_AtenCsrMatrixMagic);
     fs->Write(num_cols);
     fs->Write(num_rows);

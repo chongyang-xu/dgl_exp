@@ -202,6 +202,7 @@ void GraphDataObject::SetData(
 
 void GraphDataObject::Save(dmlc::Stream *fs) const {
   // Using in csr for storage
+  LOG(INFO) << "GraphDataObject::Save: csr, edge_id, node_tensors, edge_tensors";
   const CSRPtr g_csr = this->gptr->GetInCSR();
   fs->Write(g_csr->indptr());
   fs->Write(g_csr->indices());

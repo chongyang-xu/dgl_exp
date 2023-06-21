@@ -78,6 +78,30 @@ class HeteroGraphDataObject : public runtime::Object {
     fs->Write(edge_tensors);
     fs->Write(ntype_names);
     fs->Write(etype_names);
+    LOG(INFO) << "HeteroGraphData Save";
+    for(int i=0; i < node_tensors.size(); i++){
+	for(int j=0; j < node_tensors[i].size(); j++){
+		auto p = node_tensors[i][j];
+		LOG(INFO) << p.first;
+	        LOG(INFO) << "n_bits=" << (uint32_t)p.second->dtype.bits;
+		for(int a = 0; a < p.second->ndim; a++){
+			LOG(INFO) << p.second->shape[a];
+		}
+		LOG(INFO);
+	}
+    }
+    for(int i=0; i < edge_tensors.size(); i++){
+	for(int j=0; j < edge_tensors[i].size(); j++){
+		auto p = edge_tensors[i][j];
+		LOG(INFO) << p.first;
+	        LOG(INFO) << "n_bits=" << (uint32_t)p.second->dtype.bits;
+		for(int a = 0; a < p.second->ndim; a++){
+			LOG(INFO) << p.second->shape[a];
+		}
+		LOG(INFO);
+	}
+    }
+
   }
 
   bool Load(dmlc::Stream *fs) {

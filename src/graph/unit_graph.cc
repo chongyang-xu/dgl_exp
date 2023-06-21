@@ -1646,12 +1646,16 @@ void UnitGraph::Save(dmlc::Stream* fs) const {
   fs->Write(static_cast<int64_t>(save_formats | 0x100000000));
   fs->Write(static_cast<int64_t>(formats_ | 0x100000000));
   if (save_formats & COO_CODE) {
+    LOG(INFO) << "UnitGraph::Save COO";
     fs->Write(GetCOO());
   }
   if (save_formats & CSR_CODE) {
+    LOG(INFO) << "UnitGraph::Save OutCSR";
     fs->Write(GetOutCSR());
+    LOG(ERROR) << "UnitGraph::Save OutCSR ERRR";
   }
   if (save_formats & CSC_CODE) {
+    LOG(INFO) << "UnitGraph::Save InSCR";
     fs->Write(GetInCSR());
   }
 }

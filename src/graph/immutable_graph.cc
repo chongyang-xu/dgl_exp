@@ -639,6 +639,7 @@ bool ImmutableGraph::Load(dmlc::Stream *fs) {
 
 /** @return Save HeteroGraph to stream, using OutCSR Matrix */
 void ImmutableGraph::Save(dmlc::Stream *fs) const {
+  LOG(INFO) << "Immu::SaveOutCSR";
   fs->Write(kDGLSerialize_ImGraph);
   fs->Write(GetOutCSR());
 }
