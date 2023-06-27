@@ -13,6 +13,7 @@ from gcn import GCN
 from graphsage import SAGE as GraphSAGE
 from infer_dist import inference as dist_model_inference
 
+import os
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
@@ -90,10 +91,20 @@ def run(args, device, data):
     loss_fcn = loss_fcn.to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
+    last_epoch = -1
+
+    checkpoint_path = "./tmp/ckpt_test_dgl.pt"
+    if os. path. exists(checkpoint_path):
+        # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+        # ckpt = th.load(checkpoint_path, map_location=map_location))
+        ckpt = th.load(checkpoint_path)
+        model.load_state_dict(ckpt['model_state_dict']);
+        optimizer.load_state_dict(ckpt['optimizer_state_dict']);
+        last_epoch = ckpt['epoch']
+ 
     # Training loop
     iter_tput = []
-    epoch = 0
-    for epoch in range(args.num_epochs):
+    for epoch in range(last_epoch+1, args.num_epochs):
         tic = time.time()
 
         sample_time = 0
@@ -210,7 +221,16 @@ def run(args, device, data):
                     g.rank(), val_acc, test_acc, time.time() - start
                 )
             )
-
+        if epoch % 5 == 0:
+            # if args.local_rank == 0:
+            if g.rank() == 0:
+                th.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': loss.item(),
+                }, checkpoint_path)
+            exit(0)
 
 def main(args):
     print(socket.gethostname(), "Initializing DGL dist")
