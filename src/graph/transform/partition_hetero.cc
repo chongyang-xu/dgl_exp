@@ -17,6 +17,7 @@
 #include "vc.h"
 
 #include <climits>
+#include <sys/stat.h> // for stat
 
 #if !defined(_WIN32)
 #include <GKlib.h>

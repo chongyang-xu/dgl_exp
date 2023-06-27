@@ -26,6 +26,16 @@ struct MmapFile {
     CHECK_NE(data_ptr, MAP_FAILED) << "mmap failed for file: " << path;
   }
 
+  explicit MmapFile(std::string path_, size_t create_length) {
+    path = path_;
+    fd = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0x7777);
+    CHECK_GE(fd, 0) << "Can't open file: " << path;
+    len = create_length;
+    ftruncate(fd, len);
+    data_ptr = mmap(0, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    CHECK_NE(data_ptr, MAP_FAILED) << "mmap failed for file: " << path;
+  }
+
   ~MmapFile() {
     CHECK_EQ(munmap(data_ptr, len), 0) << "munmap failed for file: " << path;
     CHECK_EQ(close(fd), 0) << "Can't close file: " << path;
