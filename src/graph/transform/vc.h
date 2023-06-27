@@ -326,6 +326,7 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     }
                 }
             }
+	    TIK(construct_vc_relabel);
 #pragma omp barrier
 
             std::bitset<MAX_N_PARTITION> replicate2pids;
@@ -403,6 +404,10 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     //////////////////////////////////////////
                 }
 
+		if(l_pid == 0){
+                    TOK(construct_vc_relabel);
+		}
+
                 //assign each sigle node
                 for(uint64_t idx=l_pid; idx < vc_map.size(); idx+=num_parts){
                         if(get_mpid(vc_map[idx]) == VCR_MPID_MASK){
@@ -429,6 +434,9 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     }
                 }
             }
+	    
+			
+            TIK(construct_vc_extend_1_hop);
 #pragma omp barrier
             ////////////////////////////////////////////////////
             //extend 1 hop neighbor: BEGIN
@@ -466,6 +474,9 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
             //extend 1 hop neighbor: END
             ////////////////////////////////////////////////////
 #pragma omp barrier
+	    if(l_pid == 0){
+                TOK(construct_vc_extend_1_hop);
+            }
             {
                 if (vc_debug_level == 1 && l_pid == 0){
                     int max_row = pid2src[0].size() > 10 ? 10: pid2src[0].size();
@@ -475,6 +486,7 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     }
                 }
             }
+	    TIK(construct_vc_add_rev_sl_construct);
 #pragma omp barrier
             if (l_pid == 0) LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
 
@@ -526,6 +538,10 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
             std::shared_ptr<HeteroSubgraph> subg_ptr(
                 new HeteroSubgraph(hsg));
             subgs[l_pid] = subg_ptr;
+	    
+            if(l_pid==0) {
+                TOK(construct_vc_add_rev_sl_construct);
+            }
         }
     });
 

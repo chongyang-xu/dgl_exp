@@ -92,6 +92,7 @@ HaloHeteroSubgraph GetSubgraphWithHalo(
   const dgl_id_t *src_data = static_cast<dgl_id_t *>(src->data);
   const dgl_id_t *dst_data = static_cast<dgl_id_t *>(dst->data);
   const dgl_id_t *eid_data = static_cast<dgl_id_t *>(eid->data);
+  TIK(getsubgraphhalo_iter_edge_list);
   for (int64_t i = 0; i < num_edges; i++) {
     // We check if the source node is in the original node.
     auto it1 = orig_nodes.find(src_data[i]);
@@ -108,9 +109,11 @@ HaloHeteroSubgraph GetSubgraphWithHalo(
       outer_nodes[0].push_back(src_data[i]);
     }
   }
+  TOK(getsubgraphhalo_iter_edge_list);
 
   // Now we need to traverse the graph with the in-edges to access nodes
   // and edges more hops away.
+  TIK(getsubgraphhalo_extend_1_hop);
   for (int k = 1; k < num_hops; k++) {
     const std::vector<dgl_id_t> &nodes = outer_nodes[k - 1];
     EdgeArray in_edges = hg->InEdges(0, aten::VecToIdArray(nodes));
@@ -165,9 +168,11 @@ HaloHeteroSubgraph GetSubgraphWithHalo(
       }
     }
   }
+  TOK(getsubgraphhalo_extend_1_hop);
 
   // We assign new Ids to the nodes in the subgraph. We ensure that the HALO
   // nodes are behind the input nodes.
+  TIK(getsubgraphhalo_assign_new_id);
   std::unordered_map<dgl_id_t, dgl_id_t> old2new;
   for (size_t i = 0; i < old_node_ids.size(); i++) {
     old2new[old_node_ids[i]] = i;
@@ -190,6 +195,8 @@ HaloHeteroSubgraph GetSubgraphWithHalo(
     dgl_id_t old_nid = old_node_ids[i];
     inner_nodes[i] = all_nodes[old_nid];
   }
+  TOK(getsubgraphhalo_assign_new_id);
+  TIK(getsubgraphhalo_create_coo);
   aten::COOMatrix coo(
       old_node_ids.size(), old_node_ids.size(), new_src, new_dst);
   HeteroGraphPtr ugptr = UnitGraph::CreateFromCOO(1, coo);
@@ -200,6 +207,7 @@ HaloHeteroSubgraph GetSubgraphWithHalo(
   halo_subg.induced_edges = {aten::VecToIdArray(edge_eid)};
   // TODO(zhengda) we need to switch to 8 bytes afterwards.
   halo_subg.inner_nodes = {aten::VecToIdArray<int>(inner_nodes, 32)};
+  TOK(getsubgraphhalo_create_coo);
   return halo_subg;
 }
 
@@ -233,6 +241,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionWithHalo_Hetero")
       CHECK_EQ(node_parts->dtype.bits, 64)
           << "Only supports 64bits tensor for now";
 
+
+      TIK(copy_nodes_to_partition);
       const int64_t *part_data = static_cast<int64_t *>(node_parts->data);
       int64_t num_nodes = node_parts->shape[0];
       std::unordered_map<int, std::vector<int64_t>> part_map;
@@ -255,10 +265,12 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionWithHalo_Hetero")
         part_ids.push_back(it->first);
         part_nodes.push_back(it->second);
       }
+      TOK(copy_nodes_to_partition);
       // When we construct subgraphs, we need to access both in-edges and
       // out-edges. We need to make sure the in-CSR and out-CSR exist.
       // Otherwise, we'll try to construct in-CSR and out-CSR in openmp for
       // loop, which will lead to some unexpected results.
+      TIK(get_subgraph);
       ugptr->GetInCSR();
       ugptr->GetOutCSR();
       std::vector<std::shared_ptr<HaloHeteroSubgraph>> subgs(max_part_id + 1);
@@ -273,6 +285,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionWithHalo_Hetero")
           subgs[part_id] = subg_ptr;
         }
       });
+      TOK(get_subgraph);
       List<HeteroSubgraphRef> ret_list;
       for (size_t i = 0; i < subgs.size(); i++) {
         ret_list.push_back(HeteroSubgraphRef(subgs[i]));
@@ -315,6 +328,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       vc_vid_t s_vid, d_vid;
 
       if(strategy == "vcrandom"){
+	TIK(vcr_first_iter);
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
@@ -339,6 +353,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 gid2rpids[d_vid].insert(pid);
             }
         }
+	TOK(vcr_first_iter);
       }else if (strategy == "vcoblivious"){
         //d is degree : #machines which a vertex spans
         //diff to graphlab, here just book keeping onece for all partitions

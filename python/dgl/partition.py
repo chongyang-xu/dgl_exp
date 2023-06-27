@@ -237,9 +237,11 @@ def partition_graph_with_halo(g, node_part, extra_cached_hops, reshuffle=False):
     for i, subg in enumerate(subgs):
         inner_node = _get_halo_heterosubgraph_inner_node(subg)
         inner_node = F.zerocopy_from_dlpack(inner_node.to_dlpack())
+        ta = time.time()
         subg = create_subgraph(
             subg, subg.induced_nodes, subg.induced_edges, inner_node
         )
+        print("Construct subgraphs: create_subgraph {:.3f} seconds".format(time.time() - ta))
         subg.ndata["inner_node"] = inner_node
         subg.ndata["part_id"] = F.gather_row(node_part, subg.ndata[NID])
         if reshuffle:
