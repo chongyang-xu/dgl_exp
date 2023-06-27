@@ -416,9 +416,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
       } else if (strategy == "vcbfs"){
-        const int N_BFS_SRC_NODES      = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
-        const int N_BLOCK_NEIGHBOR_HOP = 2;
-        const int N_BLOCK_MAX          = 2 * (num_nodes+N_BFS_SRC_NODES) / N_BFS_SRC_NODES;
+        const uint64_t N_BFS_SRC_NODES      = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
+        const uint64_t N_BLOCK_NEIGHBOR_HOP = 2;
+        const uint64_t N_BLOCK_MAX          = 2 * (num_nodes+N_BFS_SRC_NODES) / N_BFS_SRC_NODES;
         LOG(INFO) << "bfs #src_cnt:" << N_BFS_SRC_NODES;
         LOG(INFO) << "bfs #blk_max:" << N_BLOCK_MAX;
         // generate BFS source nodes
