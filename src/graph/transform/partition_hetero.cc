@@ -415,6 +415,81 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 gid2rpids[d_vid].insert(pid);
             }
         }
+      } else if (strategy == "vcst") {
+        // spanning tree
+        ska::flat_hash_map<vc_vid_t, ska::flat_hash_set<vc_vid_t>> st;
+        std::vector<bool> vst(num_nodes, false);
+
+        const uint64_t N_BFS_SRC_NODES      = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
+        LOG(INFO) << "bfs #src_cnt:" << N_BFS_SRC_NODES;
+        // generate BFS source nodes
+        IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
+              N_BFS_SRC_NODES, num_nodes, false);
+        CHECK_EQ(random_source_nodes->dtype.bits, 32) << "Only supports 32bits tensor for now";
+        const int32_t *src_nodes = static_cast<int32_t *>(random_source_nodes->data);
+        CHECK_EQ(random_source_nodes->shape[0], N_BFS_SRC_NODES);
+        
+        ska::flat_hash_set<vc_vid_t> cur;
+        ska::flat_hash_set<vc_vid_t> next;
+        // initialize
+        for(int i=0; i < N_BFS_SRC_NODES; i++){
+            vst[src_nodes[i]] = true;
+            st[src_nodes[i]]={};
+            next.insert(src_nodes[i]);
+        }
+        // #iter: num pass of full edge list
+        bool converged = false;
+        uint32_t iter_cnt = 0;
+        while(!converged){
+            converged = true;
+            iter_cnt++;
+            cur = std::move(next);
+            for (size_t idx = 0; idx < num_edges; idx++) {
+                s_vid = src[idx];
+                auto iter = cur.find(s_vid);
+                if (iter == cur.end()) continue;
+                d_vid = dst[idx];
+                if (vst[d_vid] == false){
+                    vst[d_vid] = true;
+                    converged = false;
+                    st[s_vid].insert(d_vid);
+                    st[d_vid] = {};
+                    next.insert(d_vid);
+                }
+            }
+        }
+        LOG(INFO) << "st  takes   :" << iter_cnt << " iter(s) to converge";
+        // partition
+        for (size_t idx=0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            if (add_self_loop){
+                if(s_vid == d_vid){
+                    continue;
+                }
+            }
+
+            uint32_t pid = s_vid % num_parts;
+
+            auto it = st.find(s_vid);
+            if(it != st.end() && it->second.find(d_vid) != it->second.end()){
+                for(int i=0;i<num_parts;i++){
+                        pid2src[i].push_back(s_vid);
+                        pid2dst[i].push_back(d_vid);
+                }
+            }else{
+                uint32_t pid = HashEdge(s_vid, d_vid) % num_parts;
+                pid2src[pid].push_back(s_vid);
+                pid2dst[pid].push_back(d_vid);
+            } 
+           if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK) {
+                set_mpid(vc_map[s_vid], pid);
+            }
+            if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK) {
+                set_mpid(vc_map[d_vid], pid);
+            }
+        }
+
       } else if (strategy == "vcbfs"){
         const uint64_t N_BFS_SRC_NODES      = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const uint64_t N_BLOCK_NEIGHBOR_HOP = 2;
@@ -810,6 +885,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     List<HeteroSubgraphRef> ret_list;
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf"){
+        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
+    } else if (strategy == "vcst"){
+        use_1_hop_halo = false;
+        LOG(INFO) << "vcst: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     } else if (strategy == "vcbfs"){
         use_1_hop_halo = false;

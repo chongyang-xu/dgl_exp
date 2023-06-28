@@ -869,7 +869,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
     elif part_method[:2] == "vc":
         # vertex cut
         partition_with_reshuffle = False    #TODO(ds4gnn)?
-        assert part_method == "vcrandom" or part_method == "vcoblivious" or part_method == "vchdrf" or part_method == "vcbfs" or part_method == "vcrw"
+        assert part_method == "vcrandom" or part_method == "vcoblivious" or part_method == "vchdrf" or part_method == "vcbfs" or part_method == "vcrw" or part_method == "vcst"
         assert vc_json is not None, "vc_json is required"
         edge_file_bin = vc_json['edge_file_bin']
         num_nodes = vc_json['num_nodes']
