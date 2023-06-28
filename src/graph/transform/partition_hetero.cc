@@ -818,6 +818,11 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
 	}
 	*/
+	// a csr, a workaround for contructing back to coo
+        ska::flat_hash_map<uint32_t, std::vector<ska::flat_hash_set<vc_vid_t>>> pid2vid2adj;
+	for(int i = 0; i < num_parts; i++){
+	    pid2vid2adj[i] = std::vector<ska::flat_hash_set<vc_vid_t>>(num_nodes);
+	}
 
         for(uint64_t d = 0; d < N_DEPTH; d++){
             // initialize by clear and assign
@@ -860,14 +865,14 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             // assign sampled edge to each partition
             for(uint32_t pidx=0; pidx < num_parts; pidx++){
                 auto& vid2cur = pid2vid2cur[pidx];
+		auto& vid2adj = pid2vid2adj[pidx];
                 for(auto p : vid2cur){
                     // best effort main partition assignment
                     if(get_mpid(vc_map[p.first]) == VCR_MPID_MASK){
                         set_mpid(vc_map[p.first], pidx);
                     }
-                    for(auto v: p.second){ // coo, has duplicated edge
-                        pid2src[pidx].push_back(p.first);
-                        pid2dst[pidx].push_back(v);
+                    for(auto v: p.second){ // csr, has no duplicated edge
+			vid2adj[p.first].insert(v);
                         if(get_mpid(vc_map[v]) == VCR_MPID_MASK){
                             set_mpid(vc_map[v], pidx);
                         }
@@ -875,6 +880,19 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 }
             }
         }
+	// workaround : constructing coo from csr
+	for(uint32_t pidx=0; pidx < num_parts; pidx++){
+		auto& src = pid2src[pidx];
+		auto& dst = pid2dst[pidx];
+		auto& vid2adj = pid2vid2adj[pidx];
+		for(uint32_t u=0; u < vid2adj.size(); u++){
+			for(auto v: vid2adj[u]){
+                        	src.push_back(u);
+				dst.push_back(v);
+			}
+		}	
+		vid2adj.clear();
+	}
         TOK(vcrw);
       } else {
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
