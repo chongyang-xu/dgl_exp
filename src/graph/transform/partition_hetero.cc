@@ -469,7 +469,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 }
             }
 
-            uint32_t pid = s_vid % num_parts;
+            uint32_t pid = HashEdge(s_vid, d_vid) % num_parts;
 
             auto it = st.find(s_vid);
             if(it != st.end() && it->second.find(d_vid) != it->second.end()){
@@ -478,11 +478,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                         pid2dst[i].push_back(d_vid);
                 }
             }else{
-                uint32_t pid = HashEdge(s_vid, d_vid) % num_parts;
                 pid2src[pid].push_back(s_vid);
                 pid2dst[pid].push_back(d_vid);
             } 
-           if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK) {
+            if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK) {
                 set_mpid(vc_map[s_vid], pid);
             }
             if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK) {
