@@ -396,8 +396,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
 
 	TOK(vcdeg_first_iter);
       }else if (strategy == "vcoblivious"){
-        //d is degree : #machines which a vertex spans
-        //diff to graphlab, here just book keeping onece for all partitions
+        // d is degree : #machines which a vertex spans
+        // diff to graphlab, here just book keeping onece for all partitions
         std::vector<std::bitset<MAX_N_PARTITION>> dht(MAX_N_NODE, 0);//2.4GB degree hash table, record machine ids each node spans
         std::vector<size_t> part_num_edges(num_parts, 0);
         std::vector<double> part_score(num_parts, 0);

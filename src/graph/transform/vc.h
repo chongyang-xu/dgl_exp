@@ -212,11 +212,15 @@ inline static uint32_t AsignEdgeToPartitionHDRF(
   // Compute the score of each proc.
   const size_t kPartNum = part_num_edges.size();
 
-  size_t deg_u = src_true_degree + 1;
-  size_t deg_v = dst_true_degree + 1;
-  double SUM = deg_u + deg_v;
-  double fu = static_cast<double>(deg_u) / SUM;
-  double fv = 1.0 - fu;
+  size_t deg_u = src_true_degree;
+  deg_u = deg_u +1;
+  size_t deg_v = dst_true_degree;
+  deg_v = deg_v +1;
+  size_t SUM = deg_u + deg_v;
+  double fu = deg_u;
+  fu /= SUM;
+  double fv = deg_v;
+  fv /= SUM;
 
   uint32_t best_pid = -1;
   double maxscore = 0.0;
