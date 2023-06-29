@@ -148,6 +148,52 @@ inline static uint32_t AsignEdgeToPartitionGreedy(
   return best_pid;
 }
 
+inline static uint32_t AsignEdgeToPartitionGreedyDegree(
+    const uint32_t one, const uint32_t another,
+    const uint32_t deg_one, const uint32_t deg_another,
+    const uint32_t deg_low, const uint32_t deg_high,
+    std::bitset<MAX_N_PARTITION>& sd, std::bitset<MAX_N_PARTITION>& dd,
+    std::vector<size_t>& part_num_edges) {
+  // Compute the score of each proc.
+  const size_t kPartNum = part_num_edges.size();
+
+  uint32_t best_pid = -1;
+  double maxscore = 0.0;
+  double epsilon = 1.0;
+
+  auto res = std::minmax_element(part_num_edges.begin(), part_num_edges.end());
+  size_t minedges = *res.first;
+  size_t maxedges = *res.second;
+
+  std::vector<double> part_score(kPartNum, 0.0);
+  for (size_t i = 0; i < kPartNum; ++i) {
+ 
+    part_score[i] = (maxedges - part_num_edges[i]) / (epsilon + maxedges - minedges);
+
+    if(sd.test(i)){
+    	part_score[i] += (deg_one < deg_low) ? 2.0 : (deg_one > deg_high) ? 0.0 : 0.4;
+    }
+    if(dd.test(i)){
+    	part_score[i] += (deg_another < deg_low) ? 2.0 : (deg_one > deg_high) ? 0.0 : 0.4;
+    }
+
+  }
+  maxscore = *std::max_element(part_score.begin(), part_score.end());
+
+  std::vector<uint32_t> top_procs;
+  for (size_t i = 0; i < kPartNum; ++i)
+    if (std::fabs(part_score[i] - maxscore) < 1e-5) top_procs.push_back(i);
+
+  // Hash the edge to one of the best procs.
+  best_pid = top_procs[HashEdge(one, another) % top_procs.size()];
+
+  assert(best_pid < kPartNum);
+  sd.set(best_pid);
+  dd.set(best_pid);
+  ++part_num_edges[best_pid];
+  return best_pid;
+}
+
 /*
  *  author : Fabio Petroni [www.fabiopetroni.com]
  *           Giorgio Iacoboni [g.iacoboni@gmail.com]
