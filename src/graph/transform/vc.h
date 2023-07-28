@@ -376,9 +376,8 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     }
                 }
             }
-	    TIK(construct_vc_relabel);
+            TIK(construct_vc_relabel);
 #pragma omp barrier
-
             std::bitset<MAX_N_PARTITION> replicate2pids;
             for(uint64_t i=0; use_1_hop_halo && i < num_parts; i++) {
                 remote_1_hop_edges_u[l_pid][i].reserve(src_nodes.size()/num_parts/8);
@@ -454,9 +453,7 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     //////////////////////////////////////////
                 }
 
-		if(l_pid == 0){
-                    TOK(construct_vc_relabel);
-		}
+                if(l_pid == 0) TOK(construct_vc_relabel);
 
                 //assign each sigle node
                 for(uint64_t idx=l_pid; idx < vc_map.size(); idx+=num_parts){
@@ -484,8 +481,7 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     }
                 }
             }
-	    
-			
+
             TIK(construct_vc_extend_1_hop);
 #pragma omp barrier
             ////////////////////////////////////////////////////
@@ -524,9 +520,8 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
             //extend 1 hop neighbor: END
             ////////////////////////////////////////////////////
 #pragma omp barrier
-	    if(l_pid == 0){
-                TOK(construct_vc_extend_1_hop);
-            }
+            if(l_pid == 0) TOK(construct_vc_extend_1_hop);
+
             {
                 if (vc_debug_level == 1 && l_pid == 0){
                     int max_row = pid2src[0].size() > 10 ? 10: pid2src[0].size();
@@ -536,7 +531,7 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
                     }
                 }
             }
-	    TIK(construct_vc_add_rev_sl_construct);
+            TIK(construct_vc_add_rev_sl_construct);
 #pragma omp barrier
             if (l_pid == 0) LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
 

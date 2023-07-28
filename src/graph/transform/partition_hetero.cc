@@ -329,7 +329,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       vc_vid_t s_vid, d_vid;
 
       if(strategy == "vcrandom"){
-	TIK(vcr_first_iter);
+        TIK(vcr_first_iter);
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
             d_vid = dst[idx];
@@ -354,21 +354,71 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 gid2rpids[d_vid].insert(pid);
             }
         }
-	TOK(vcr_first_iter);
+    T   OK(vcr_first_iter);
+      }else if(strategy == "vcrcm"){
+        // cid : chunk id
+        ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2src;
+        ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2dst;
+        const uint32_t num_chunks = 100;
+
+        for (size_t idx=0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            if (add_self_loop){
+                if(s_vid == d_vid){
+                    continue;
+                }
+            }
+            uint32_t cid = HashEdge(s_vid, d_vid) % num_chunks;
+            cid2src[cid].push_back(s_vid);
+            cid2dst[cid].push_back(d_vid);
+            // in this sequential implementation,
+            // assign main part_id when a node shows up for the first time
+            if( get_mpid(vc_map[s_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[s_vid], cid);
+            }else if (get_mpid(vc_map[s_vid]) != cid) {
+                gid2rpids[s_vid].insert(cid);
+            }
+            if( get_mpid(vc_map[d_vid]) == VCR_MPID_MASK){
+                set_mpid(vc_map[d_vid], cid);
+            }else if (get_mpid(vc_map[d_vid]) != cid){
+                gid2rpids[d_vid].insert(cid);
+            }
+        }
+        IdArray cid2pid = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
+              num_chunks, num_parts, true);
+        CHECK_EQ(cid2pid->dtype.bits, 32) << "Only supports 32bits tensor for now";
+        const int32_t *c2p_ptr = static_cast<int32_t *>(cid2pid->data);
+        CHECK_EQ(cid2pid->shape[0], num_chunks);
+        for(uint32_t i = 0; i < num_chunks; i++) {
+            auto pidx = c2p_ptr[i];
+            auto& c_src = cid2src[i];
+            auto& c_dst = cid2dst[i];
+            for(uint32_t j=0; j < c_src.size(); j++){
+                pid2src[pidx].push_back(c_src[j]);
+                pid2dst[pidx].push_back(c_dst[j]);
+            }
+            c_src.clear();
+            c_dst.clear();
+        }
+        for (uint32_t i = 0; i < num_nodes; i++) {
+            if ( get_mpid(vc_map[i]) != VCR_MPID_MASK) {
+                vc_map[i] = c2p_ptr[vc_map[i]];
+            }
+        }
       }else if(strategy == "vcdeg"){
-	TIK(vcdeg_first_iter);
+        TIK(vcdeg_first_iter);
         std::vector<uint32_t> degree(num_nodes, 0);
         for (size_t idx = 0; idx < num_edges; idx++){
-	    ++degree[src[idx]];
-	}
+            ++degree[src[idx]];
+        }
         // d is degree : #machines which a vertex spans
         // diff to graphlab, here just book keeping onece for all partitions
         std::vector<std::bitset<MAX_N_PARTITION>> dht(MAX_N_NODE, 0);//2.4GB degree hash table, record machine ids each node spans
         std::vector<size_t> part_num_edges(num_parts, 0);
 
-	uint32_t th_h = num_edges / num_nodes * 2;
-	uint32_t th_l = num_edges / num_nodes;
-
+        uint32_t th_h = num_edges / num_nodes * 10;
+        uint32_t th_l = num_edges / num_nodes;
 
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
@@ -393,8 +443,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 gid2rpids[d_vid].insert(pid);
             }
         }
-
-	TOK(vcdeg_first_iter);
+        TOK(vcdeg_first_iter);
       }else if (strategy == "vcoblivious"){
         // d is degree : #machines which a vertex spans
         // diff to graphlab, here just book keeping onece for all partitions
@@ -902,14 +951,14 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             // assign sampled edge to each partition
             for(uint32_t pidx=0; pidx < num_parts; pidx++){
                 auto& vid2cur = pid2vid2cur[pidx];
-		auto& vid2adj = pid2vid2adj[pidx];
+                auto& vid2adj = pid2vid2adj[pidx];
                 for(auto p : vid2cur){
                     // best effort main partition assignment
                     if(get_mpid(vc_map[p.first]) == VCR_MPID_MASK){
                         set_mpid(vc_map[p.first], pidx);
                     }
                     for(auto v: p.second){ // csr, has no duplicated edge
-			vid2adj[p.first].insert(v);
+                        vid2adj[p.first].insert(v);
                         if(get_mpid(vc_map[v]) == VCR_MPID_MASK){
                             set_mpid(vc_map[v], pidx);
                         }
@@ -940,11 +989,11 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf" || strategy == "vcdeg") {
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
-    } else if (strategy == "vcst"){
+    } else if (strategy == "vcst") {
         use_1_hop_halo = false;
         LOG(INFO) << "vcst: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
-    } else if (strategy == "vcbfs"){
+    } else if (strategy == "vcbfs") {
         use_1_hop_halo = false;
         LOG(INFO) << "vcbfs: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
