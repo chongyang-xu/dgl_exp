@@ -781,8 +781,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const uint64_t N_RW_ORI_NODES = 0.5 * num_nodes;
         const uint64_t N_DEPTH  = 4;
-	const uint32_t ratio[4] = {1, 2, 3, 4};
-	// const uint32_t ratio[4] = {0, 0, 0, 0};
+        const uint32_t ratio[4] = {1, 2, 3, 4};
+        // const uint32_t ratio[4] = {0, 0, 0, 0};
         std::vector<std::vector<uint32_t>> fanout = {
             {0},
             {10},
@@ -798,38 +798,38 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
               N_RW_ORI_NODES, num_nodes, false);
         CHECK_EQ(random_source_nodes->dtype.bits, 32) << "Only supports 32bits tensor for now";
-        
-	int32_t *original_nodes = static_cast<int32_t *>(random_source_nodes->data);
+
+        int32_t *original_nodes = static_cast<int32_t *>(random_source_nodes->data);
         CHECK_EQ(random_source_nodes->shape[0], N_RW_ORI_NODES);
-	
-	struct stat dummy;
-	std::string src_bin = "/workspace/work/ds4gnn/result/exp_06_20_repartition/logs/random_src_vid.bin";
-	std::string idx_bin = "/workspace/work/ds4gnn/result/exp_06_20_repartition/logs/idx.bin";
-	uint32_t idx = 0;
-	if (stat(src_bin.c_str(), &dummy) == 0) { //file exsist
-		dgl::serialize::MmapFile mf(src_bin);
-		vc_vid_t * v = mf.AsUint32Ptr();
-		for (int i = 0; i < N_RW_ORI_NODES; i++)
-			original_nodes[i] = v[i];
 
-		dgl::serialize::MmapFile idxf(idx_bin);
-		uint32_t * vv = idxf.AsUint32Ptr();
-		idx = *vv;
-		*vv = (idx+1)%num_parts;
-	} else { // file not exist
-		dgl::serialize::MmapFile mf(src_bin, N_RW_ORI_NODES*sizeof(vc_vid_t));
-		vc_vid_t * v = mf.AsUint32Ptr();
-		for (int i = 0; i < N_RW_ORI_NODES; i++)
-			v[i] = original_nodes[i];
+        struct stat dummy;
+        std::string src_bin = "/workspace/work/ds4gnn/result/exp_06_20_repartition/logs/random_src_vid.bin";
+        std::string idx_bin = "/workspace/work/ds4gnn/result/exp_06_20_repartition/logs/idx.bin";
+        uint32_t idx = 0;
+        if (stat(src_bin.c_str(), &dummy) == 0) { //file exsist
+            dgl::serialize::MmapFile mf(src_bin);
+            vc_vid_t * v = mf.AsUint32Ptr();
+            for (int i = 0; i < N_RW_ORI_NODES; i++)
+                original_nodes[i] = v[i];
 
-		dgl::serialize::MmapFile idxf(idx_bin, sizeof(uint32_t));
-		uint32_t * vv = idxf.AsUint32Ptr();
-		*vv = 1 % num_parts;
-	}
-	
-	const uint64_t N_RW_SRC_NODES_CUR_GRP = N_RW_ORI_NODES / (num_parts + 1);
-	const uint64_t N_RW_SRC_NODES_CUR_LEN = N_RW_SRC_NODES_CUR_GRP << 1;
-	const int32_t* src_nodes = original_nodes + N_RW_SRC_NODES_CUR_GRP * idx;
+            dgl::serialize::MmapFile idxf(idx_bin);
+            uint32_t * vv = idxf.AsUint32Ptr();
+            idx = *vv;
+            *vv = (idx+1)%num_parts;
+        } else { // file not exist
+            dgl::serialize::MmapFile mf(src_bin, N_RW_ORI_NODES*sizeof(vc_vid_t));
+            vc_vid_t * v = mf.AsUint32Ptr();
+            for (int i = 0; i < N_RW_ORI_NODES; i++)
+                v[i] = original_nodes[i];
+
+            dgl::serialize::MmapFile idxf(idx_bin, sizeof(uint32_t));
+            uint32_t * vv = idxf.AsUint32Ptr();
+            *vv = 1 % num_parts;
+        }
+
+        const uint64_t N_RW_SRC_NODES_CUR_GRP = N_RW_ORI_NODES / (num_parts + 1);
+        const uint64_t N_RW_SRC_NODES_CUR_LEN = N_RW_SRC_NODES_CUR_GRP << 1;
+        const int32_t* src_nodes = original_nodes + N_RW_SRC_NODES_CUR_GRP * idx;
         LOG(INFO) << "rw  #idx      : " << idx;
         LOG(INFO) << "rw  #cur_len  : " << N_RW_SRC_NODES_CUR_LEN;
 
@@ -838,32 +838,29 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         std::vector<ska::flat_hash_set<vc_vid_t>> pid2next(num_parts);
         std::vector<uint32_t> degree(num_nodes, 0);
         for (size_t idx = 0; idx < num_edges; idx++){
-	    ++degree[src[idx]];
-	}
+            ++degree[src[idx]];
+        }
 
-	// assign source nodes to paritions randomly
-	
+        // assign source nodes to paritions randomly
         for(uint64_t i=0; i < N_RW_SRC_NODES_CUR_LEN; i++) {
             pid2next[src_nodes[i]%num_parts].insert(src_nodes[i]);
             if(get_mpid(vc_map[src_nodes[i]]) == VCR_MPID_MASK){
-               set_mpid(vc_map[src_nodes[i]], src_nodes[i] % num_parts);
+                set_mpid(vc_map[src_nodes[i]], src_nodes[i] % num_parts);
             }
         }
-	
-	/*
-        for(uint64_t i=0; i < num_nodes; i++){
-            pid2next[i%num_parts].insert(i);
-            if(get_mpid(vc_map[i]) == VCR_MPID_MASK){
-               set_mpid(vc_map[i], i % num_parts);
-            }
-	}
-	*/
-	// a csr, a workaround for contructing back to coo
+        /*
+            for(uint64_t i=0; i < num_nodes; i++){
+                pid2next[i%num_parts].insert(i);
+                if(get_mpid(vc_map[i]) == VCR_MPID_MASK){
+                set_mpid(vc_map[i], i % num_parts);
+                }
+        }
+        */
+        // a csr, a workaround for contructing back to coo
         ska::flat_hash_map<uint32_t, std::vector<ska::flat_hash_set<vc_vid_t>>> pid2vid2adj;
-	for(int i = 0; i < num_parts; i++){
-	    pid2vid2adj[i] = std::vector<ska::flat_hash_set<vc_vid_t>>(num_nodes);
-	}
-
+        for(int i = 0; i < num_parts; i++){
+            pid2vid2adj[i] = std::vector<ska::flat_hash_set<vc_vid_t>>(num_nodes);
+        }
         for(uint64_t d = 0; d < N_DEPTH; d++){
             // initialize by clear and assign
             for(uint32_t pidx=0; pidx < num_parts; pidx++) {
@@ -920,19 +917,19 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 }
             }
         }
-	// workaround : constructing coo from csr
-	for(uint32_t pidx=0; pidx < num_parts; pidx++){
-		auto& src = pid2src[pidx];
-		auto& dst = pid2dst[pidx];
-		auto& vid2adj = pid2vid2adj[pidx];
-		for(uint32_t u=0; u < vid2adj.size(); u++){
-			for(auto v: vid2adj[u]){
-                        	src.push_back(u);
-				dst.push_back(v);
-			}
-		}	
-		vid2adj.clear();
-	}
+        // workaround : constructing coo from csr
+        for(uint32_t pidx=0; pidx < num_parts; pidx++){
+            auto& src = pid2src[pidx];
+            auto& dst = pid2dst[pidx];
+            auto& vid2adj = pid2vid2adj[pidx];
+            for(uint32_t u=0; u < vid2adj.size(); u++){
+                for(auto v: vid2adj[u]){
+                    src.push_back(u);
+                    dst.push_back(v);
+                }
+            }
+            vid2adj.clear();
+        }
         TOK(vcrw);
       } else {
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
