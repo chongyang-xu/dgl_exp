@@ -7,7 +7,7 @@
 #ifndef DGL_GRAPH_TRANSFORM_VC_H_
 #define DGL_GRAPH_TRANSFORM_VC_H_
 
-#define MAX_N_PARTITION 64
+#define MAX_N_PARTITION 1024
 #define MAX_N_NODE 300000000
 
 #include <bitset>
@@ -49,6 +49,7 @@ using vc_vid_t=uint32_t;
 using vc_bid_t=uint16_t;
 
 #define VC_BID_MAX USHRT_MAX
+#define VC_VID_MAX UINT32_MAX
 #define VCR_MPID_MASK (0xFFFF)
 inline vc_record_t set_mpid (vc_record_t& r, uint32_t pid){
     r &= ~VCR_MPID_MASK;
