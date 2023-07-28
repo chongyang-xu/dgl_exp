@@ -988,6 +988,36 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
     List<HeteroSubgraphRef> ret_list;
     std::vector<std::shared_ptr<HeteroSubgraph>> subgs(num_parts);
     if (strategy == "vcrandom" || strategy == "vcoblivious" || strategy == "vchdrf" || strategy == "vcdeg") {
+        std::vector<std::multiset<vc_vid_t>> part0_adj =
+        ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
+        if(part0_adj[0].size() > 0){
+          for (size_t idx=0; idx < num_edges; idx++){
+            s_vid = src[idx];
+            d_vid = dst[idx];
+            if (part0_adj[s_vid].size() > 0) {
+                auto iter = part0_adj[s_vid].find(d_vid);
+                if(iter != part0_adj[s_vid].end()){
+                    part0_adj[s_vid].erase(iter);
+                } else {
+                    LOG(INFO) << "Not included edge: case 1: " << s_vid << ", " << d_vid;
+                }
+            } else {
+                LOG(INFO) << "Not included edge: case 2: " << s_vid << ", " << d_vid;
+            }
+          }
+          LOG(INFO) << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+          for (size_t i = 0; i < part0_adj.size(); i++) {
+            if (part0_adj[i].size() > 0) {
+                for (auto s : part0_adj[i]) {
+                    LOG(INFO) << "Impossible edge: " << i << ", " << s;
+                }
+            }
+          }
+        }
+        LOG(INFO) << "Construct finished";
+    } else if (strategy == "vcrcm") {
+        use_1_hop_halo = false;
+        LOG(INFO) << "vcrcm: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     } else if (strategy == "vcst") {
         use_1_hop_halo = false;

@@ -285,6 +285,8 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
             vc_debug_level = 1;
         }else if(std::string(dbg_str) == "2"){
             vc_debug_level = 2;
+        }else if(std::string(dbg_str) == "3"){
+            vc_debug_level = 3;
         }
     }
     if (vc_debug_level == 2) {
@@ -360,6 +362,12 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
         t.resize(num_parts);
         remote_1_hop_edges_u.push_back(t);
         remote_1_hop_edges_v.push_back(t);
+    }
+
+    // debug
+    std::vector<std::multiset<vc_vid_t>> part0_adj( vc_map.size() );
+    for(int i=0; i < vc_map.size(); i++) {
+        part0_adj[i] = {};
     }
 
     runtime::parallel_for(0, num_parts, [&](uint64_t b, uint64_t e) {
@@ -535,6 +543,12 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
             TIK(construct_vc_add_rev_sl_construct);
 #pragma omp barrier
             if (l_pid == 0) LOG(INFO) << "Partition: " << l_pid <<", #induced_nodes: " << induced_nodes.size();
+            if (l_pid == 0 && vc_debug_level == 3) {
+                for (size_t i = 0; i < pid2src[0].size(); i++) {
+                    part0_adj[ induced_nodes[pid2src[0][i]] ].insert(induced_nodes[pid2dst[0][i]]);
+                }
+            }
+#pragma omp barrier
 
             // add reverse edge
             if (add_reverse_edge) {
@@ -584,15 +598,15 @@ void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pi
             std::shared_ptr<HeteroSubgraph> subg_ptr(
                 new HeteroSubgraph(hsg));
             subgs[l_pid] = subg_ptr;
-	    
+
             if(l_pid==0) {
                 TOK(construct_vc_add_rev_sl_construct);
             }
         }
     });
 
+    return part0_adj;
 }
-
 
 }  // namespace transform
 }  // namespace dgl
