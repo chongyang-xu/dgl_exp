@@ -268,8 +268,8 @@ inline static uint32_t AsignEdgeToPartitionHDRF(
 //////////////////////////////////////////////////////////////////////////
 //  ported from graphlab: End
 //////////////////////////////////////////////////////////////////////////
-
-void ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pid2src,
+std::vector<std::multiset<vc_vid_t>>
+ConstructVCSubGraph(ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pid2src,
                          ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>>& pid2dst,
                          std::vector<vc_record_t>& vc_map,
                          std::vector<ska::flat_hash_set<uint32_t>>& gid2rpids,
