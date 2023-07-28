@@ -91,22 +91,20 @@ def run(args, device, data):
     loss_fcn = loss_fcn.to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-    last_epoch = -1
-
-    checkpoint_path = "./tmp/ckpt_test_dgl.pt"
-    if os. path. exists(checkpoint_path):
+    # resume from checkpoint if resume_path is not None
+    ckpt_epoch = -1
+    if args.resume_path is not None:
         # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
         # ckpt = th.load(checkpoint_path, map_location=map_location))
-        ckpt = th.load(checkpoint_path)
-        model.load_state_dict(ckpt['model_state_dict']);
-        optimizer.load_state_dict(ckpt['optimizer_state_dict']);
-        last_epoch = ckpt['epoch']
- 
+        ckpt = th.load(args.resume_path)
+        model.load_state_dict(ckpt['model_state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        ckpt_epoch = ckpt['epoch']
+
     # Training loop
     iter_tput = []
-    for epoch in range(last_epoch+1, args.num_epochs):
+    for epoch in range(ckpt_epoch + 1, args.num_epochs):
         tic = time.time()
-
         sample_time = 0
         g_copy_time = 0  # graph struct copy time
         f_copy_time = 0  # feature copy time
@@ -200,7 +198,6 @@ def run(args, device, data):
                 num_inputs,
             )
         )
-        epoch += 1
 
         if epoch % args.eval_every == 0 and epoch != 0:
             start = time.time()
@@ -221,16 +218,17 @@ def run(args, device, data):
                     g.rank(), val_acc, test_acc, time.time() - start
                 )
             )
-        if epoch % 5 == 0:
-            # if args.local_rank == 0:
-            if g.rank() == 0:
+        if args.checkpoint_path is not None and args.checkpoint_every > 0:
+            # epoch starts from 0
+            if (epoch + 1) % args.checkpoint_every == 0 and g.rank() == 0:
+                print(args.checkpoint_path)
+                ckpt_name = f"{args.checkpoint_path}/epoch_{epoch:03d}.pt"
                 th.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': loss.item(),
-                }, checkpoint_path)
-            exit(0)
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss.item(),
+                }, ckpt_name)
 
 def main(args):
     print(socket.gethostname(), "Initializing DGL dist")
@@ -398,6 +396,24 @@ if __name__ == "__main__":
         type=str,
         default="socket",
         help="backend net type, 'socket' or 'tensorpipe'",
+    )
+    parser.add_argument(
+        "--resume-path",
+        type=str,
+        default=None,
+        help="resume from a path of a checkpoint",
+    )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default=None,
+        help="a path to store all checkpoints",
+    )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=-1,
+        help="save a checkpoint erver N EPOCHS",
     )
     args = parser.parse_args()
 
