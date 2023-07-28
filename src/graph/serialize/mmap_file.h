@@ -17,7 +17,7 @@ namespace serialize {
 struct MmapFile {
   explicit MmapFile(std::string path_) {
     path = path_;
-    fd = open(path.c_str(), O_RDWR, 0x7777);
+    fd = open(path.c_str(), O_RDWR | O_CREAT, 0x7777);
     CHECK_GE(fd, 0) << "Can't open file: " << path;
     struct stat st;
     CHECK_EQ(fstat(fd, &st), 0) << "";
