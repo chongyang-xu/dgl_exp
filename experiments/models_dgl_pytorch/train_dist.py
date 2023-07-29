@@ -415,19 +415,19 @@ if __name__ == "__main__":
         help="backend net type, 'socket' or 'tensorpipe'",
     )
     parser.add_argument(
-        "--resume-path",
+        "--resume_path",
         type=str,
         default=None,
         help="resume from a path of a checkpoint",
     )
     parser.add_argument(
-        "--checkpoint-path",
+        "--checkpoint_path",
         type=str,
         default=None,
         help="a path to store all checkpoints",
     )
     parser.add_argument(
-        "--checkpoint-every",
+        "--checkpoint_every",
         type=int,
         default=-1,
         help="save a checkpoint erver N EPOCHS",

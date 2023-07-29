@@ -28,9 +28,9 @@ parser.add_argument('--disable_backup_server', type=str, required=True,  choices
 
 parser.add_argument('--verbose', type=bool, required=False, help='print cmd line')
 
-parser.add_argument("--resume-path", type=str, default=None, help="resume from a path of a checkpoint")
-parser.add_argument("--checkpoint-path", type=str, default=None, help="a path to store all checkpoints")
-parser.add_argument("--checkpoint-every", type=int, default=-1, help="save a checkpoint erver N EPOCHS")
+parser.add_argument("--resume_path", type=str, default=None, help="resume from a path of a checkpoint")
+parser.add_argument("--checkpoint_path", type=str, default=None, help="a path to store all checkpoints")
+parser.add_argument("--checkpoint_every", type=int, default=-1, help="save a checkpoint erver N EPOCHS")
 
 parser.add_argument("--log_path", type=str, required=True, help="log path used for this script")
 args = parser.parse_args()
@@ -88,10 +88,12 @@ SINGLE_JOB_CMD += "{BORDER}{BACKUP_SERVER}".format(
 SINGLE_JOB_CMD += " --batch_size_eval 2000 --eval_every 100"
 
 if args.resume_path is not None:
-    SINGLE_JOB_CMD += f" --resume-path {args.resume_path}"
+    SINGLE_JOB_CMD += f" --resume_path {args.resume_path}"
 
 if args.checkpoint_path is not None:
-    SINGLE_JOB_CMD += f" --checkpoint-path {args.checkpoint_path}"
+    SINGLE_JOB_CMD += f" --checkpoint_path {args.checkpoint_path}"
+
+SINGLE_JOB_CMD += f" --checkpoint_every {args.checkpoint_every}"
 
 SINGLE_JOB_CMD += f" --checkpoint-every {args.checkpoint_every}"
 
