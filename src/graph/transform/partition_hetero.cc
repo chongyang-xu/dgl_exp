@@ -828,6 +828,136 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
       } else if (strategy == "vcns") {
         TIK(vcns);
         // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
+        const uint64_t N_RW_ORI_NODES = 0.5 * num_nodes / num_parts;
+        const uint64_t N_DEPTH  = 4;
+        const uint32_t ratio[4] = {1, 2, 3, 4};
+        // const uint32_t ratio[4] = {0, 0, 0, 0};
+        std::vector<std::vector<uint32_t>> fanout = {
+            {0},
+            {10},
+            {20, 10},
+            {30, 20, 10 },
+            {40, 30, 20, 10},
+            {50, 40, 30, 20, 10},
+            {60, 50, 40, 30, 20, 10}
+        };
+        LOG(INFO) << "rw  #src_cnt  : " << N_RW_ORI_NODES;
+        LOG(INFO) << "rw  #depth    : " << N_DEPTH;
+        // generate BFS source nodes
+        IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
+              N_RW_ORI_NODES, num_nodes, false);
+        CHECK_EQ(random_source_nodes->dtype.bits, 32) << "Only supports 32bits tensor for now";
+
+        int32_t *original_nodes = static_cast<int32_t *>(random_source_nodes->data);
+        CHECK_EQ(random_source_nodes->shape[0], N_RW_ORI_NODES);
+
+        const uint64_t N_RW_SRC_NODES_CUR_GRP = N_RW_ORI_NODES;
+        const uint64_t N_RW_SRC_NODES_CUR_LEN = N_RW_SRC_NODES_CUR_GRP;
+        const int32_t* src_nodes = original_nodes;
+        LOG(INFO) << "rw  #idx      : " << idx;
+        LOG(INFO) << "rw  #cur_len  : " << N_RW_SRC_NODES_CUR_LEN;
+
+        std::vector<ska::flat_hash_map<vc_vid_t, std::vector<vc_vid_t>>> pid2vid2cur(num_parts);
+        std::vector<ska::flat_hash_map<vc_vid_t, uint32_t>> pid2vid2cnt(num_parts);
+        std::vector<ska::flat_hash_set<vc_vid_t>> pid2next(num_parts);
+        std::vector<uint32_t> degree(num_nodes, 0);
+        for (size_t idx = 0; idx < num_edges; idx++){
+            ++degree[src[idx]];
+        }
+
+        // assign source nodes to paritions randomly
+        for(uint64_t i=0; i < N_RW_SRC_NODES_CUR_LEN; i++) {
+            pid2next[src_nodes[i]%num_parts].insert(src_nodes[i]);
+            if(get_mpid(vc_map[src_nodes[i]]) == VCR_MPID_MASK){
+                set_mpid(vc_map[src_nodes[i]], src_nodes[i] % num_parts);
+            }
+        }
+        /*
+            for(uint64_t i=0; i < num_nodes; i++){
+                pid2next[i%num_parts].insert(i);
+                if(get_mpid(vc_map[i]) == VCR_MPID_MASK){
+                set_mpid(vc_map[i], i % num_parts);
+                }
+        }
+        */
+        // a csr, a workaround for contructing back to coo
+        ska::flat_hash_map<uint32_t, std::vector<ska::flat_hash_set<vc_vid_t>>> pid2vid2adj;
+        for(int i = 0; i < num_parts; i++){
+            pid2vid2adj[i] = std::vector<ska::flat_hash_set<vc_vid_t>>(num_nodes);
+        }
+        for(uint64_t d = 0; d < N_DEPTH; d++){
+            // initialize by clear and assign
+            for(uint32_t pidx=0; pidx < num_parts; pidx++) {
+                pid2vid2cur[pidx].clear();
+                for(auto vid : pid2next[pidx]){
+                    // fill self vid as default neighbor
+                    std::vector<vc_vid_t> t;
+                    t.reserve(100 >> ratio[d]);
+                    pid2vid2cur[pidx][vid] = std::move(t);
+                    pid2vid2cnt[pidx][vid] = 0;
+                }
+                pid2next[pidx].clear();
+            }
+            // sampling neighbor from edge stream
+            for (size_t idx=0; idx < num_edges; idx++){
+                s_vid = src[idx];
+                d_vid = dst[idx];
+
+                for(uint32_t pidx=0; pidx < num_parts; pidx++){
+                    auto& vid2cur = pid2vid2cur[pidx];
+                    auto& vid2cnt = pid2vid2cnt[pidx];
+                    auto iter = vid2cur.find(s_vid);
+                    if (iter != vid2cur.end()){
+                        vid2cnt[s_vid]++;
+                        if( vid2cnt[s_vid] <= (degree[s_vid] >> ratio[d]) ){
+                            vid2cur[s_vid].push_back(d_vid);
+                            pid2next[pidx].insert(d_vid);
+                        } else {
+                            uint32_t r = dgl::RandomEngine::ThreadLocal()->RandInt(1000000000) % vid2cnt[s_vid];
+                            if( r < (degree[s_vid] >> ratio[d]) ){
+                                vid2cur[s_vid][r] = d_vid;
+                                pid2next[pidx].erase(vid2cur[s_vid][r]);
+                                pid2next[pidx].insert(d_vid);
+                            }
+                        }
+                    }
+                }
+            }
+            // assign sampled edge to each partition
+            for(uint32_t pidx=0; pidx < num_parts; pidx++){
+                auto& vid2cur = pid2vid2cur[pidx];
+                auto& vid2adj = pid2vid2adj[pidx];
+                for(auto p : vid2cur){
+                    // best effort main partition assignment
+                    if(get_mpid(vc_map[p.first]) == VCR_MPID_MASK){
+                        set_mpid(vc_map[p.first], pidx);
+                    }
+                    for(auto v: p.second){ // csr, has no duplicated edge
+                        vid2adj[p.first].insert(v);
+                        if(get_mpid(vc_map[v]) == VCR_MPID_MASK){
+                            set_mpid(vc_map[v], pidx);
+                        }
+                    }
+                }
+            }
+        }
+        // workaround : constructing coo from csr
+        for(uint32_t pidx=0; pidx < num_parts; pidx++){
+            auto& src = pid2src[pidx];
+            auto& dst = pid2dst[pidx];
+            auto& vid2adj = pid2vid2adj[pidx];
+            for(uint32_t u=0; u < vid2adj.size(); u++){
+                for(auto v: vid2adj[u]){
+                    src.push_back(u);
+                    dst.push_back(v);
+                }
+            }
+            vid2adj.clear();
+        }
+        TOK(vcns);
+      } else if (strategy == "vcnc-repart") {
+        TIK(vcns_repart);
+        // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const uint64_t N_RW_ORI_NODES = 0.5 * num_nodes;
         const uint64_t N_DEPTH  = 4;
         const uint32_t ratio[4] = {1, 2, 3, 4};
@@ -979,7 +1109,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
             vid2adj.clear();
         }
-        TOK(vcns);
+        TOK(vcns_repart);
       } else {
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
       }
