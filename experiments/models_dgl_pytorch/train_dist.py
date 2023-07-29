@@ -14,6 +14,7 @@ from graphsage import SAGE as GraphSAGE
 from infer_dist import inference as dist_model_inference
 
 import os
+import datetime
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
@@ -240,7 +241,23 @@ def main(args):
     if not args.standalone:
         print(socket.gethostname(), "Initializing DGL process group")
         t_b = time.time()
-        th.distributed.init_process_group(backend=args.backend)
+
+        if args.backend == "gloo":
+            th.distributed.init_process_group(backend=args.backend)
+        elif args.backend == "nccl":
+            master_ip   = os.environ['MASTER_ADDR']
+            master_port = os.environ['MASTER_PORT']
+            w_size      = int(os.environ['ROLE_WORLD_SIZE'])
+            w_rank      = int(os.environ['ROLE_RANK'])
+            os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
+            os.environ['NCCL_DEBUG']='WARN'
+            dist_init_method = 'tcp://{master_ip}:{master_port}'.format(master_ip=master_ip, master_port='1234')
+            th.distributed.init_process_group(backend=args.backend,
+                                              init_method=dist_init_method,
+                                              world_size=w_size,
+                                              rank=w_rank,
+                                              timeout=datetime.timedelta(seconds=10)
+                                             )
         print("local_rank={}, init_process_group TIME={:.4f} sec".format(
             args.local_rank, time.time()-t_b))
     print(socket.gethostname(), "Initializing DistGraph")
