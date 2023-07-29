@@ -355,7 +355,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
     T   OK(vcr_first_iter);
-      }else if(strategy == "vcrcm"){
+      }else if(strategy == "vcrgrp"){
         // cid : chunk id
         ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2src;
         ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2dst;
@@ -578,7 +578,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
 
-      } else if (strategy == "vcbfs"){
+      } else if (strategy == "vcbgl"){
         const uint64_t N_BFS_SRC_NODES      = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const uint64_t N_BLOCK_NEIGHBOR_HOP = 2;
         const uint64_t N_BLOCK_MAX          = 2 * (num_nodes+N_BFS_SRC_NODES) / N_BFS_SRC_NODES;
@@ -602,7 +602,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         /////////////////////////////////////////////////////////
         ////  multi-source BFS, the graph is treated as directed
         /////////////////////////////////////////////////////////
-        TIK(vcbfs);
+        TIK(vcbgl);
         std::vector<vc_bid_t> gid2bid(num_nodes, VC_BID_MAX); // global node id to block id
         std::vector<bool> vst(num_nodes, false);   // count node number for each block
         std::vector<uint32_t> bid2cnt(N_BFS_SRC_NODES, 0);   // count node number for each block
@@ -730,7 +730,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         LOG(INFO) << "bfs takes   :" << iter_cnt+1 << " iter(s) to converge";
         LOG(INFO) << "bfs #unlabel:" << unlabeled_node.size() << " (" << num_nodes << ") randomly assigned";
         LOG(INFO) << "bfs #co_edge:" << co_edge_n << " (deg_avg = " << co_edge_n/N_BFS_SRC_NODES << ")";
-        TOK(vcbfs);
+        TOK(vcbgl);
 
         ///////////////////////////////////////
         ////   assign block to partition
@@ -825,8 +825,8 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
         }
         TOK(uncoarsening);
-      } else if (strategy == "vcrw") {
-        TIK(vcrw);
+      } else if (strategy == "vcns") {
+        TIK(vcns);
         // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const uint64_t N_RW_ORI_NODES = 0.5 * num_nodes;
         const uint64_t N_DEPTH  = 4;
@@ -979,7 +979,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             }
             vid2adj.clear();
         }
-        TOK(vcrw);
+        TOK(vcns);
       } else {
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
       }
@@ -1015,21 +1015,21 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
           }
         }
         LOG(INFO) << "Construct finished";
-    } else if (strategy == "vcrcm") {
+    } else if (strategy == "vcrgrp") {
         use_1_hop_halo = false;
-        LOG(INFO) << "vcrcm: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
+        LOG(INFO) << "vcrgrp: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     } else if (strategy == "vcst") {
         use_1_hop_halo = false;
         LOG(INFO) << "vcst: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
-    } else if (strategy == "vcbfs") {
+    } else if (strategy == "vcbgl") {
         use_1_hop_halo = false;
-        LOG(INFO) << "vcbfs: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
+        LOG(INFO) << "vcbgl: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
-    } else if (strategy == "vcrw"){
+    } else if (strategy == "vcns"){
         use_1_hop_halo = false;
-        LOG(INFO) << "vcrw: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
+        LOG(INFO) << "vcns: use_1_hop_halo === "<< use_1_hop_halo << " when constructing subgraph";
         ConstructVCSubGraph(pid2src, pid2dst, vc_map, gid2rpids, subgs, num_parts, use_1_hop_halo, add_self_loop, add_reverse_edge);
     } else{
         LOG(FATAL) << "not supported edge assign strategy: "<< strategy;
