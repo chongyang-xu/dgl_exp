@@ -33,6 +33,8 @@ parser.add_argument("--checkpoint_path", type=str, default=None, help="a path to
 parser.add_argument("--checkpoint_every", type=int, default=-1, help="save a checkpoint erver N EPOCHS")
 
 parser.add_argument("--log_path", type=str, required=True, help="log path used for this script")
+
+parser.add_argument("--eval_every", type=int, default=20, help="do evaluation every N epochs")
 args = parser.parse_args()
 
 DEFAULT_FANOUT_OF_LAYER = {
@@ -85,7 +87,7 @@ SINGLE_JOB_CMD += "{BORDER}{BACKUP_SERVER}".format(
                 BACKUP_SERVER=" --disable_backup_server" if args.disable_backup_server == 'True' else ""
                 )
 
-SINGLE_JOB_CMD += " --batch_size_eval 2000 --eval_every 100"
+SINGLE_JOB_CMD += f" --eval_every {args.eval_every}"
 
 if args.resume_path is not None:
     SINGLE_JOB_CMD += f" --resume_path {args.resume_path}"

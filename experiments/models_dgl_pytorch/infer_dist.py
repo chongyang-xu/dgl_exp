@@ -69,7 +69,10 @@ def inference(model, g, x, batch_size, device, stop_at_border=False):
                 h = model.dropout(h)
 
             y[output_nodes] = h.cpu()
+            h = None
+            h_dst = None
 
         x = y
         g.barrier()
+    x = None
     return y

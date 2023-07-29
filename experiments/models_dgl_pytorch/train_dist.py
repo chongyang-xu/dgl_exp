@@ -200,7 +200,7 @@ def run(args, device, data):
             )
         )
 
-        if epoch % args.eval_every == 0 and epoch != 0:
+        if (epoch + 1) % args.eval_every == 0 and epoch != 0:
             start = time.time()
             val_acc, test_acc = evaluate(
                 model if args.standalone else model.module,
