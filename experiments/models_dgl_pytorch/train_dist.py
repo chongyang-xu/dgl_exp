@@ -164,41 +164,38 @@ def run(args, device, data):
                         if th.cuda.is_available()
                         else 0
                     )
-                    print(
-                        "Part {} | Epoch {:05d} | Step {:05d} | Loss {:.4f} | "
-                        "Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU "
-                        "{:.1f} MB | time {:.3f} s\n".format(
-                            g.rank(),
-                            epoch,
-                            step,
-                            loss.item(),
-                            acc.item(),
-                            np.mean(iter_tput[3:]),
-                            gpu_mem_alloc,
-                            np.sum(step_time[-args.log_every:]),
-                        )
-                    )
+                    print("step_|epoch|{:04d}|step|{:04d}|part|{:04d}|loss|{:.4f}|"
+                          "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}".format(
+                                epoch,
+                                step,
+                                g.rank(),
+                                loss.item(),
+                                acc.item(),
+                                np.mean(iter_tput[3:]),
+                                gpu_mem_alloc,
+                                np.sum(step_time[-args.log_every:])
+                               )
+                         )
                 account_end = time.time()
                 account_time += account_end - update_end
                 start = account_end
         toc = time.time()
-        print(
-            "Part {}, Epoch Time(s): {:.4f}, sampling: {:.4f}, g_copy: {:.4f}, f_copy: {:.4f}, "
-            "forward: {:.4f}, backward: {:.4f}, update: {:.4f}, account: {:.4f}, #seeds: {}, "
-            "#inputs: {}\n".format(
-                g.rank(),
-                toc - tic,
-                sample_time,
-                g_copy_time,
-                f_copy_time,
-                forward_time,
-                backward_time,
-                update_time,
-                account_time,
-                num_seeds,
-                num_inputs,
-            )
-        )
+        print("epoch_|epoch|{:04d}|part|{:04d}|epoch_seconds|{:.4f}|sampling|{:.4f}|g_copy|{:.4f}|f_copy|{:.4f}|"
+                "forward|{:.4f}|backward|{:.4f}|update|{:.4f}|account|{:.4f}|n_seed|{:012d}|n_input|{:012d}".format(
+                    epoch,
+                    g.rank(),
+                    toc - tic,
+                    sample_time,
+                    g_copy_time,
+                    f_copy_time,
+                    forward_time,
+                    backward_time,
+                    update_time,
+                    account_time,
+                    num_seeds,
+                    num_inputs,
+                  )
+              )
 
         if (epoch + 1) % args.eval_every == 0 and epoch != 0:
             start = time.time()
@@ -213,12 +210,14 @@ def run(args, device, data):
                 device,
                 args.stop_at_border,
             )
-            print(
-                "Part {}, Val Acc {:.4f}, Test Acc {:.4f}, time: {:.4f}".format
-                (
-                    g.rank(), val_acc, test_acc, time.time() - start
+            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}".format(
+                        epoch,
+                        g.rank(),
+                        val_acc,
+                        test_acc,
+                        time.time() - start
+                    )
                 )
-            )
         if args.checkpoint_path is not None and args.checkpoint_every > 0:
             # epoch starts from 0
             if (epoch + 1) % args.checkpoint_every == 0 and g.rank() == 0:

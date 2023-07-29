@@ -43,7 +43,7 @@ def inference(model, g, x, batch_size, device, stop_at_border=False):
                 persistent=True,
             )
         print(
-            f"|V|={g.num_nodes()}, eval batch size: {batch_size}"
+                f"g.rank()={g.rank()}, |V|={g.num_nodes()}, eval batch size: {batch_size}"
         )
 
         sampler = dgl.dataloading.NeighborSampler(
