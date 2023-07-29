@@ -97,8 +97,6 @@ if args.checkpoint_path is not None:
 
 SINGLE_JOB_CMD += f" --checkpoint_every {args.checkpoint_every}"
 
-SINGLE_JOB_CMD += f" --checkpoint-every {args.checkpoint_every}"
-
 LAUNCH_JOBS_CMD_PREFIX="{TRAIN_LAUNCHER} --num_servers {N_SERVER} --num_trainers {N_TRAINER} --num_samplers {N_SAMPLER}".format(
                         TRAIN_LAUNCHER=TRAIN_LAUNCHER,
                         N_SERVER=args.n_server_per_mach,
