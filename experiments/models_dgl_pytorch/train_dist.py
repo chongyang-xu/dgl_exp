@@ -221,7 +221,6 @@ def run(args, device, data):
         if args.checkpoint_path is not None and args.checkpoint_every > 0:
             # epoch starts from 0
             if (epoch + 1) % args.checkpoint_every == 0 and g.rank() == 0:
-                print(args.checkpoint_path)
                 ckpt_name = f"{args.checkpoint_path}/epoch_{epoch:03d}.pt"
                 th.save({
                     'epoch': epoch,
