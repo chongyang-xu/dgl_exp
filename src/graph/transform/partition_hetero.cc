@@ -354,7 +354,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                 gid2rpids[d_vid].insert(pid);
             }
         }
-    T   OK(vcr_first_iter);
+        TOK(vcr_first_iter);
       }else if(strategy == "vcrgrp"){
         // cid : chunk id
         ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2src;
@@ -854,7 +854,6 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         const uint64_t N_RW_SRC_NODES_CUR_GRP = N_RW_ORI_NODES;
         const uint64_t N_RW_SRC_NODES_CUR_LEN = N_RW_SRC_NODES_CUR_GRP;
         const int32_t* src_nodes = original_nodes;
-        LOG(INFO) << "rw  #idx      : " << idx;
         LOG(INFO) << "rw  #cur_len  : " << N_RW_SRC_NODES_CUR_LEN;
 
         std::vector<ska::flat_hash_map<vc_vid_t, std::vector<vc_vid_t>>> pid2vid2cur(num_parts);
