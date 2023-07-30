@@ -12,6 +12,7 @@ parser.add_argument('--one_id', type=str, required=True, help='a unique id to id
 
 parser.add_argument('--dataset', type=str, required=True, choices=['ogbpr', 'ogbpa', 'cora'], help='')
 parser.add_argument('--part_algo', type=str, required=True, choices=['random', 'metis', 'vcrandom', 'vcoblivious', 'vcbgl', 'vcns', 'vcst', 'vcdeg', 'vcrgrp'], help='')
+parser.add_argument('--part_hop', type=int, required=True, choices=[0, 1], help='')
 parser.add_argument('--model', type=str, required=True, choices=['sage', 'gcn'], help='')
 parser.add_argument('--layers', type=int, required=True, choices=[5, 4, 3, 2], help='')
 parser.add_argument('--batch_size', type=int, required=True, help='')
@@ -53,10 +54,11 @@ CLASS_NUM_OF = {
 N_PARTS= args.n_mach * args.n_server_per_mach
 
 IP_CONF="wtool/ipconfigs/docker{}.txt".format(args.n_mach)
-PART_CONF="DATA/ds_pre/{DS_NAME}/data_part_n{N_PARTS}_{PART_ALGO}/{DS_NAME}.json".format(
+PART_CONF="DATA/ds_pre/{DS_NAME}/data_part_n{N_PARTS}_{PART_ALGO}_{PART_HOP}/{DS_NAME}.json".format(
 	DS_NAME=args.dataset,
     N_PARTS=N_PARTS,
-    PART_ALGO=args.part_algo)
+    PART_ALGO=args.part_algo,
+    PART_HOP=args.part_hop)
 
 TRAIN_LAUNCHER="python3 /workspace/work/ds4gnn/compiling/dgl_dsg/tools/launch.py --workspace /workspace/work/ds4gnn"
 PYTHON_CMD_PATH="python3"

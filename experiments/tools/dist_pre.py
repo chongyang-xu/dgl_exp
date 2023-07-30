@@ -223,8 +223,8 @@ def main(args):
     print(dgl_g)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
-    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}".format(
-            root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo)
+    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}".format(
+            root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo, hop=args.num_hops)
     part_config_path = "{out}/{ds}.json".format(out=part_out_path, ds=args.dataset)
     if not os.path.exists(part_out_path):
         os.makedirs(part_out_path)
