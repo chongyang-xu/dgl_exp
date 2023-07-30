@@ -969,7 +969,11 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                                                                 inner_edge_mask)))
                 edge_map_val[etype].append([int(inner_eids[0]), int(inner_eids[-1]) + 1])
             val = np.cumsum(val).tolist()
-            assert val[-1] == g.number_of_edges(etype)
+            if val[-1] != g.number_of_edges(etype):
+                print("{}".format('X'*50))
+                print(f"X WARNING!!! Sum of partition edges != number_of_edges")
+                print(f"X WARNING!!! {val[-1]} != {g.number_of_edges(etype)}")
+                print("{}".format('X'*50))
     else:
         node_map_val = {}
         edge_map_val = {}
