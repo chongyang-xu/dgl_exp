@@ -58,8 +58,8 @@ PART_CONF="DATA/ds_pre/{DS_NAME}/data_part_n{N_PARTS}_{PART_ALGO}/{DS_NAME}.json
     N_PARTS=N_PARTS,
     PART_ALGO=args.part_algo)
 
-TRAIN_LAUNCHER="python3.9 /workspace/work/ds4gnn/compiling/dgl_dsg/tools/launch.py --workspace /workspace/work/ds4gnn"
-PYTHON_CMD_PATH="python3.9"
+TRAIN_LAUNCHER="python3 /workspace/work/ds4gnn/compiling/dgl_dsg/tools/launch.py --workspace /workspace/work/ds4gnn"
+PYTHON_CMD_PATH="python3"
 
 SINGLE_JOB_CMD = "{PYTHON_CMD_PATH} dgl_exp_th/train_dist.py".format(PYTHON_CMD_PATH=PYTHON_CMD_PATH)
 #SINGLE_JOB_CMD  = "gdb -x gdb.txt --batch --args {PYTHON_CMD_PATH} dgl_exp_th/train_dist.py".format(PYTHON_CMD_PATH=PYTHON_CMD_PATH)
