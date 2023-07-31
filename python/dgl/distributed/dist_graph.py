@@ -1349,7 +1349,7 @@ def _split_local(partition_book, rank, elements, local_eles, vc=False):
     if not vc:
         local_eles = _get_overlap(elements, local_eles)
     else:
-        local_mask_full = elements
+        local_mask_full = F.tensor(elements)
         local_eles = F.nonzero_1d(local_mask_full)
 
     # get a subset for the local client.
