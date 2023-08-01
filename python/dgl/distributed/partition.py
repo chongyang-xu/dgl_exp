@@ -229,7 +229,7 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
         sort_etypes = len(etypes) > 1
         _save_graphs(part_graph_file, [part], formats=graph_formats,
             sort_etypes=sort_etypes)
-    print('{}[2/2]: splitting feature and save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
+    print('[partition_time]|{}[2/2]|splitting feature and save partitions (s)|{:.3f}|peak memory (GB)|{:.3f}'.format(
         part_method, time.time() - start, get_peak_mem()))
 
     _dump_part_config(f'{out_path}/{graph_name}.json', part_metadata)
@@ -791,7 +791,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
     if num_parts == 1 and part_method[:2] != "vc":
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
-        print('{}[1/3]: Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
+        print('[partition_time]|{}[1/3]|converting to homo graph (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
             part_method, time.time() - start, get_peak_mem()))
         assert num_trainers_per_machine >= 1
         if num_trainers_per_machine > 1:
@@ -804,7 +804,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                 balance_edges=balance_edges,
                 mode='k-way')
             _set_trainer_ids(g, sim_g, node_parts)
-            print('{}[2/3]: Assigning nodes to METIS partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+            print('[partition_time]|{}[2/3]|Assigning nodes to METIS partitions (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
                 part_method, time.time() - start, get_peak_mem()))
 
         node_parts = F.zeros((sim_g.number_of_nodes(),), F.int64, F.cpu())
@@ -832,7 +832,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         partition_with_reshuffle = True
         start = time.time()
         sim_g, balance_ntypes = get_homogeneous(g, balance_ntypes)
-        print('{}[1/3]: Converting to homogeneous graph takes {:.3f}s, peak mem: {:.3f} GB'.format(
+        print('[partition_time]|{}[1/3]|Converting to homo graph (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
             part_method, time.time() - start, get_peak_mem()))
         if part_method == 'metis':
             assert num_trainers_per_machine >= 1
@@ -855,14 +855,14 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                                                         balance_ntypes=balance_ntypes,
                                                         balance_edges=balance_edges,
                                                         objtype=objtype)
-            print('{}[2/3]: Assigning nodes to METIS partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+            print('[partition_time]|{}[2/3]|Assigning nodes to METIS partitions (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
                 part_method, time.time() - start, get_peak_mem()))
         else:
             node_parts = random_choice(num_parts, sim_g.number_of_nodes())
         start = time.time()
         parts, orig_nids, orig_eids = partition_graph_with_halo(sim_g, node_parts, num_hops,
                                                                 reshuffle=partition_with_reshuffle)
-        print('{}[3/3]: Splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+        print('[partition_time]|{}[3/3]|Splitting the graph into partitions (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
             part_method, time.time() - start, get_peak_mem()))
         if return_mapping:
             orig_nids, orig_eids = _get_orig_ids(g, sim_g, orig_nids, orig_eids)
@@ -882,7 +882,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         assert num_hops <= 1, "halo hops only support 1 for vertex partition"
         vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method, num_hops, reshuffle=False,
                                                                     num_train_nodes=num_train_nodes, train_mask_file=train_mask_bin, add_rev_edge=add_rev_edge)
-        print('{}[1/2]: splitting the graph into partitions takes {:.3f}s, peak mem: {:.3f} GB'.format(
+        print('[partition_time]|{}[1/2]|splitting the graph into partitions (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
             part_method, time.time() - start, get_peak_mem()))
         _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json)
 
@@ -1117,7 +1117,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         sort_etypes = len(g.etypes) > 1
         _save_graphs(part_graph_file, [part], formats=graph_formats,
             sort_etypes=sort_etypes)
-    print('{}[4/4]:  Save partitions: {:.3f} seconds, peak memory: {:.3f} GB'.format(
+    print('[partition_time]|{}[4/4]|Save partitions (s)|{:.3f}|peak memory (GB)|{:.3f}'.format(
         part_method, time.time() - start, get_peak_mem()))
 
     _dump_part_config(f'{out_path}/{graph_name}.json', part_metadata)
