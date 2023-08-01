@@ -160,24 +160,27 @@ inline static uint32_t AsignEdgeToPartitionGreedyDegree(
 
   uint32_t best_pid = -1;
   double maxscore = 0.0;
-  double epsilon = 1.0;
+  const double epsilon = 1.0;
 
   auto res = std::minmax_element(part_num_edges.begin(), part_num_edges.end());
   size_t minedges = *res.first;
   size_t maxedges = *res.second;
 
   std::vector<double> part_score(kPartNum, 0.0);
+  float score = 0.0;
   for (size_t i = 0; i < kPartNum; ++i) {
  
-    part_score[i] = (maxedges - part_num_edges[i]) / (epsilon + maxedges - minedges);
+    score = (maxedges - part_num_edges[i]) / (epsilon + maxedges - minedges);
 
     if(sd.test(i)){
-    	part_score[i] += (deg_one < deg_low) ? 2.0 : (deg_one > deg_high) ? 0.0 : 0.4;
+	if (deg_one < deg_low) score += 2.0;
+	else if (deg_one <= deg_high) score += 0.4;
     }
     if(dd.test(i)){
-    	part_score[i] += (deg_another < deg_low) ? 2.0 : (deg_one > deg_high) ? 0.0 : 0.4;
+	if (deg_another < deg_low) score += 2.0;
+	else if (deg_another <= deg_high) score += 0.4;
     }
-
+    part_score[i] = score;
   }
   maxscore = *std::max_element(part_score.begin(), part_score.end());
 
