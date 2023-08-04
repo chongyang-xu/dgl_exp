@@ -35,7 +35,9 @@ parser.add_argument("--checkpoint_every", type=int, default=-1, help="save a che
 
 parser.add_argument("--log_path", type=str, required=True, help="log path used for this script")
 
-parser.add_argument("--eval_every", type=int, default=20, help="do evaluation every N epochs")
+parser.add_argument("--eval_every", type=int, default=50, help="do evaluation every N epochs")
+
+parser.add_argument("--ip_config", type=str, help="choose which ip config to use, this is useful to run multile 1-partition experiments")
 args = parser.parse_args()
 
 DEFAULT_FANOUT_OF_LAYER = {
@@ -53,7 +55,7 @@ CLASS_NUM_OF = {
 
 N_PARTS= args.n_mach * args.n_server_per_mach
 
-IP_CONF="wtool/ipconfigs/docker{}.txt".format(args.n_mach)
+IP_CONF="wtool/ipconfigs/{}.txt".format(args.ip_config)
 PART_CONF="DATA/ds_pre/{DS_NAME}/data_part_n{N_PARTS}_{PART_ALGO}_{PART_HOP}/{DS_NAME}.json".format(
 	DS_NAME=args.dataset,
     N_PARTS=N_PARTS,
@@ -116,4 +118,4 @@ if args.verbose:
 LAUNCH_JOBS_CMD="{} \"{}\"".format(LAUNCH_JOBS_CMD_PREFIX, SINGLE_JOB_CMD)
 
 os.system( "{} 2>&1 | tee -a {}/{}.log".format(LAUNCH_JOBS_CMD, args.log_path, args.one_id) )
-os.system( "echo {} >> {}/progress.txt".format(args.one_id, args.log_path) )
+os.system( "echo {} >> {}/progress_{}.txt".format(args.one_id, args.log_path, args.ip_config if args.ip_config is not None else '') )
