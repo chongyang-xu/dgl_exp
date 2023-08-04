@@ -37,7 +37,7 @@ parser.add_argument("--log_path", type=str, required=True, help="log path used f
 
 parser.add_argument("--eval_every", type=int, default=50, help="do evaluation every N epochs")
 
-parser.add_argument("--ip_config", type=str, help="choose which ip config to use, this is useful to run multile 1-partition experiments")
+parser.add_argument("--ip_config", type=str, required=True, help="choose which ip config to use, this is useful to run multile 1-partition experiments")
 args = parser.parse_args()
 
 DEFAULT_FANOUT_OF_LAYER = {
