@@ -212,7 +212,7 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
         node_feats['_N' + '/' + 'label'] = F.gather_row(full_node_label, local_nodes)
 
         #F.tensor() # don't handle edge feature now
-        edge_feats['_N:_E:_N' + '/' + 'feat'] = F.zerocopy_from_numpy(np.ones(part.number_of_edges()))
+        #edge_feats['_N:_E:_N' + '/' + 'feat'] = F.zerocopy_from_numpy(np.ones(part.number_of_edges()))
 
         part_dir = os.path.join(out_path, "part" + str(part_id))
         node_feat_file = os.path.join(part_dir, "node_feat.dgl")
