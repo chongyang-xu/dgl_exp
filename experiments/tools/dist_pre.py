@@ -223,8 +223,9 @@ def main(args):
     print(dgl_g)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
-    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}".format(
-            root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo, hop=args.num_hops)
+    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}{partial}".format(
+            root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo, hop=args.num_hops,
+            partial= f"_first{args.save_first_n_parts}" if args.save_first_n_parts > 0 else '')
     part_config_path = "{out}/{ds}.json".format(out=part_out_path, ds=args.dataset)
     if not os.path.exists(part_out_path):
         os.makedirs(part_out_path)
@@ -241,7 +242,9 @@ def main(args):
                                             graph_formats = 'csr',
                                             balance_ntypes=balance_ntypes,
                                             balance_edges=True,  # TODO(ds4gnn): to understand
-                                            vc_json=vc_json)
+                                            vc_json=vc_json,
+                                            save_first_n_parts = args.save_first_n_parts
+                                            )
         # nmap, emap = partition_graph(..., return_mapping=True)
         print("Test load partition 0...")
         part_data = dgl.distributed.load_partition(part_config_path, 0)
@@ -255,7 +258,7 @@ def main(args):
         dgl.distributed.initialize("{pre_root}/clust_conf/config_1.txt".format(pre_root=pre_ds_root))
         g = dgl.distributed.DistGraph(
             args.dataset,
-            part_config=part_config_path
+            part_config=part_config_path,
         )
         print(g)
     #    print(g.nodes)
@@ -288,6 +291,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--n-parts", type=int, required=True, help="number of graph partitions"
+    )
+    parser.add_argument(
+        "--save-first-n-parts", type=int, default=-1, help="only save first n  (valid n > 0) partitions"
     )
     parser.add_argument(
         "--only-read",

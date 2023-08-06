@@ -263,7 +263,7 @@ def partition_graph_with_halo(g, node_part, extra_cached_hops, reshuffle=False):
 def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts,
                                         strategy, extra_cached_hops=0, reshuffle=False,
                                         num_train_nodes=0, train_mask_file=None,
-                                        add_rev_edge=False):
+                                        add_rev_edge=False, save_first_n_parts=-1):
     """Partition a graph by cutting vertex.
 
     Parameters
@@ -304,6 +304,11 @@ def partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, nu
     assert reshuffle == False, "reshuffle not implemented in vertex cut"
     orig_nids = None
     orig_eids = None
+
+    if save_first_n_parts > 0:
+        print('='*50)
+        print("INFO: save_first_n_parts is not implemented during graph partitioning phase")
+        print('='*50)
 
     subg_dict = {}
     subgs = _CAPI_DGLPartitionVertexCutWithHalo_Hetero(

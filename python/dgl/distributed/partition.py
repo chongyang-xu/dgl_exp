@@ -127,7 +127,8 @@ def _get_part_ranges(id_ranges):
         res[key] = np.concatenate([np.array(l) for l in id_ranges[key]]).reshape(-1, 2)
     return res
 
-def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts, vc_map, parts, halo_hops, vc_json):
+def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts, vc_map,
+                               parts, halo_hops, vc_json, save_first_n_parts=-1):
 
     assert halo_hops <=1 , "halo hop not implemented"
     assert num_parts > 0, "only handle >0 part(s)"
@@ -151,7 +152,8 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
                      'edge_map': edge_map_val,
                      'ntypes': ntypes,
                      'etypes': etypes,
-                     'vc_map' : VC_MAP_F_NAME
+                     'vc_map' : VC_MAP_F_NAME,
+                     'save_first_n_parts' : save_first_n_parts
                     }
 
     start = time.time()
@@ -181,7 +183,8 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
     part_metadata['part_num_nodes'] = []
     part_metadata['part_num_edges'] = []
 
-    for part_id in range(num_parts):
+    range_end = save_first_n_parts if save_first_n_parts > 0 else num_parts
+    for part_id in range(range_end):
         part = parts[part_id]
         node_feats = {}
         edge_feats = {}
@@ -280,6 +283,10 @@ def load_partition(part_config, part_id, load_feats=True):
 
     with open(part_config) as conf_f:
         part_metadata = json.load(conf_f)
+
+    if 'save_first_n_parts' in part_metadata and part_metadata['save_first_n_parts'] > 0:
+        assert part_id < part_metadata['save_first_n_parts'], "part_id={id}, but only {n} parts was saved during partition".format(id=part_id, n=part_metadata['save_first_n_parts'])
+
     assert 'part-{}'.format(part_id) in part_metadata, "part-{} does not exist".format(part_id)
     part_files = part_metadata['part-{}'.format(part_id)]
     assert 'part_graph' in part_files, "the partition does not contain graph structure."
@@ -353,6 +360,10 @@ def load_partition_feats(part_config, part_id, load_nodes=True, load_edges=True)
 
     with open(part_config) as conf_f:
         part_metadata = json.load(conf_f)
+
+    if 'save_first_n_parts' in part_metadata and part_metadata['save_first_n_parts'] > 0:
+        assert part_id < part_metadata['save_first_n_parts'], "part_id={id}, but only {n} parts was saved during partition".format(id=part_id, n=part_metadata['save_first_n_parts'])
+
     assert 'part-{}'.format(part_id) in part_metadata, "part-{} does not exist".format(part_id)
     part_files = part_metadata['part-{}'.format(part_id)]
     assert 'node_feats' in part_files, "the partition does not contain node features."
@@ -410,6 +421,10 @@ def load_partition_book(part_config, part_id):
         The edge types
     '''
     part_metadata = _load_part_config(part_config)
+
+    if 'save_first_n_parts' in part_metadata and part_metadata['save_first_n_parts'] > 0:
+        assert part_id < part_metadata['save_first_n_parts'], "part_id={id}, but only {n} parts was saved during partition".format(id=part_id, n=part_metadata['save_first_n_parts'])
+
     assert 'num_parts' in part_metadata, 'num_parts does not exist.'
     assert part_metadata['num_parts'] > part_id, \
             'part {} is out of range (#parts: {})'.format(part_id, part_metadata['num_parts'])
@@ -546,7 +561,8 @@ def _set_trainer_ids(g, sim_g, node_parts):
 
 def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method="metis",
                     balance_ntypes=None, balance_edges=False, return_mapping=False,
-                    num_trainers_per_machine=1, objtype='cut', graph_formats=None, vc_json=None):
+                    num_trainers_per_machine=1, objtype='cut', graph_formats=None, vc_json=None,
+                    save_first_n_parts=-1):
     ''' Partition a graph for distributed training and store the partitions on files.
 
     The partitioning occurs in three steps: 1) run a partition algorithm (e.g., Metis) to
@@ -866,6 +882,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
             part_method, time.time() - start, get_peak_mem()))
         if return_mapping:
             orig_nids, orig_eids = _get_orig_ids(g, sim_g, orig_nids, orig_eids)
+        if save_first_n_parts > 0:
+            assert False, "save_first_n_parts is not supported to random and metis"
     elif part_method[:2] == "vc":
         # vertex cut
         partition_with_reshuffle = False    #TODO(ds4gnn)?
@@ -881,10 +899,11 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         start = time.time()
         assert num_hops <= 1, "halo hops only support 1 for vertex partition"
         vc_maps, parts, _, _ = partition_graph_vertex_cut_with_halo(edge_file_bin, num_nodes, num_edges, num_parts, part_method, num_hops, reshuffle=False,
-                                                                    num_train_nodes=num_train_nodes, train_mask_file=train_mask_bin, add_rev_edge=add_rev_edge)
+                                                                    num_train_nodes=num_train_nodes, train_mask_file=train_mask_bin, add_rev_edge=add_rev_edge,
+                                                                    save_first_n_parts=save_first_n_parts)
         print('[partition_time]|{}[1/2]|splitting the graph into partitions (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
             part_method, time.time() - start, get_peak_mem()))
-        _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json)
+        _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts,vc_maps[0], parts, num_hops, vc_json, save_first_n_parts)
 
         if return_mapping:
             assert False, "return_mapping not implemented"
