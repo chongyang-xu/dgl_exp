@@ -65,6 +65,7 @@ def _move_metadata_to_shared_mem(
     node_map,
     edge_map,
     is_range_part,
+    use_first_n,
 ):
     """Move all metadata of the partition book to the shared memory.
 
@@ -109,6 +110,7 @@ def _move_metadata_to_shared_mem(
                 part_id,
                 len(node_map),
                 len(edge_map),
+                use_first_n,
             ]
         ),
         _get_ndata_path(graph_name, "meta"),
@@ -145,7 +147,7 @@ def _get_shared_mem_metadata(graph_name):
     """
     # The metadata has 7 elements: is_range_part, num_nodes, num_edges, num_partitions, part_id,
     # the length of node map and the length of the edge map.
-    shape = (7,)
+    shape = (8,)
     dtype = F.int64
     dtype = DTYPE_DICT[dtype]
     data = empty_shared_mem(
@@ -161,6 +163,7 @@ def _get_shared_mem_metadata(graph_name):
         part_id,
         node_map_len,
         edge_map_len,
+        use_first_n,
     ) = meta
 
     if node_map_len > 0:
@@ -180,7 +183,7 @@ def _get_shared_mem_metadata(graph_name):
     else:
         node_map = None
         edge_map = None
-    return is_range_part, part_id, num_partitions, num_nodes, num_edges, node_map, edge_map
+    return is_range_part, part_id, num_partitions, num_nodes, num_edges, node_map, edge_map, use_first_n 
 
 
 def get_shared_mem_partition_book(graph_name):
@@ -209,6 +212,7 @@ def get_shared_mem_partition_book(graph_name):
         num_edges,
         node_map_data,
         edge_map_data,
+        use_first_n
     ) = _get_shared_mem_metadata(graph_name)
     if is_range_part == 1:
         # node ID ranges and edge ID ranges are stored in the order of node type IDs
@@ -250,7 +254,7 @@ def get_shared_mem_partition_book(graph_name):
         part_num_edges_l = edge_map_data
 
         return VCMapPartitionBook(
-            part_id, num_parts, global_unique_num_nodes, global_unique_num_edges, part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map
+            part_id, num_parts, global_unique_num_nodes, global_unique_num_edges, part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map, use_first_n
         )
     else:
         raise TypeError("Only RangePartitionBook is supported currently.")
@@ -568,7 +572,7 @@ def get_part_size_edge(part_id, type_name):
     pass
 
 class VCMapPartitionBook(GraphPartitionBook):
-    def __init__(self, part_id, num_parts, num_nodes, num_edges,part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map):
+    def __init__(self, part_id, num_parts, num_nodes, num_edges,part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map, save_first_n=-1):
         self._part_id = part_id
         self._num_parts = num_parts
         self._ntypes = [ '_N'  ]
@@ -588,7 +592,9 @@ class VCMapPartitionBook(GraphPartitionBook):
         pids = F.remainder(self._vc_map, 0x10000)
         self._partition_meta_data = []
         main_nodes_sum = 0
-        for partid in range(self._num_parts):
+        self.first_n = save_first_n
+        range_end = self._num_parts if save_first_n < 1 else save_first_n
+        for partid in range(range_end):
             part_info = {}
             part_info["part_id"] = partid
             part_info["num_nodes"] = part_num_nodes_l[partid]
@@ -619,6 +625,7 @@ class VCMapPartitionBook(GraphPartitionBook):
             F.tensor(node_map_pickle),
             F.tensor(edge_map_pickle),
             2,
+            self.first_n,
         )
         self._vc_map_shm = _to_shared_mem(self._vc_map, _get_ndata_path(graph_name, 'vc_map'))
 
@@ -854,6 +861,7 @@ class RangePartitionBook(GraphPartitionBook):
             F.tensor(nid_range_pickle),
             F.tensor(eid_range_pickle),
             True,
+            -1,
         )
 
     def num_partitions(self):
