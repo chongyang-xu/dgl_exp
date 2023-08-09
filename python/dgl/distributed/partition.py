@@ -452,7 +452,8 @@ def load_partition_book(part_config, part_id):
         assert 'vc' in t
         vc_map = t['vc']
 
-        return VCMapPartitionBook(part_id, num_parts, part_metadata['num_nodes'], part_metadata['num_edges'], part_metadata['part_num_nodes'], part_metadata['part_num_edges'], ntypes, etypes, vc_map), part_metadata['graph_name'], ntypes, etypes
+        save_first_n = part_metadata['save_first_n_parts'] if 'save_first_n_parts' in part_metadata else -1
+        return VCMapPartitionBook(part_id, num_parts, part_metadata['num_nodes'], part_metadata['num_edges'], part_metadata['part_num_nodes'], part_metadata['part_num_edges'], ntypes, etypes, vc_map, save_first_n), part_metadata['graph_name'], ntypes, etypes
 
     # If this is a range partitioning, node_map actually stores a list, whose elements
     # indicate the boundary of range partitioning. Otherwise, node_map stores a filename
