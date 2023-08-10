@@ -359,7 +359,7 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         // cid : chunk id
         ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2src;
         ska::flat_hash_map<uint32_t, std::vector<vc_vid_t>> cid2dst;
-        const uint32_t num_chunks = 100;
+        const uint32_t num_chunks = 2048;
 
         for (size_t idx=0; idx < num_edges; idx++){
             s_vid = src[idx];
