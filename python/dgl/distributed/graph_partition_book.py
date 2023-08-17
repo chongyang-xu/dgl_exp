@@ -234,7 +234,7 @@ def get_shared_mem_partition_book(graph_name):
             etypes[etype] = i
             edge_map[etype] = eid_range
         return RangePartitionBook(
-            part_id, num_parts, node_map, edge_map, ntypes, etypes
+            part_id, num_parts, node_map, edge_map, ntypes, etypes, use_first_n
         )
     elif is_range_part == 2: # VCMap
         global_unique_num_nodes = num_nodes
@@ -718,7 +718,7 @@ class RangePartitionBook(GraphPartitionBook):
 
     """
 
-    def __init__(self, part_id, num_parts, node_map, edge_map, ntypes, etypes):
+    def __init__(self, part_id, num_parts, node_map, edge_map, ntypes, etypes, use_first_n):
         assert part_id >= 0, "part_id cannot be a negative number."
         assert num_parts > 0, "num_parts must be greater than zero."
         self._partid = part_id
@@ -837,6 +837,7 @@ class RangePartitionBook(GraphPartitionBook):
             part_info["num_nodes"] = int(num_nodes)
             part_info["num_edges"] = int(num_edges)
             self._partition_meta_data.append(part_info)
+        self.first_n = use_first_n
 
     def shared_memory(self, graph_name):
         """Move data to shared memory."""
@@ -861,7 +862,7 @@ class RangePartitionBook(GraphPartitionBook):
             F.tensor(nid_range_pickle),
             F.tensor(eid_range_pickle),
             True,
-            -1,
+            self.first_n,
         )
 
     def num_partitions(self):
@@ -870,18 +871,20 @@ class RangePartitionBook(GraphPartitionBook):
 
     def _num_nodes(self, ntype=DEFAULT_NTYPE):
         """The total number of nodes"""
+        lidx = -1 if self.first_n < 1 else self.first_n -1
         if ntype == DEFAULT_NTYPE:
-            return int(self._max_node_ids[-1])
+            return int(self._max_node_ids[lidx])
         else:
-            return int(self._typed_max_node_ids[ntype][-1])
+            return int(self._typed_max_node_ids[ntype][lidx])
 
     def _num_edges(self, etype=DEFAULT_ETYPE):
         """The total number of edges"""
+        lidx = -1 if self.first_n < 1 else self.first_n -1
         if etype in (DEFAULT_ETYPE, DEFAULT_ETYPE[1]):
-            return int(self._max_edge_ids[-1])
+            return int(self._max_edge_ids[lidx])
         else:
             c_etype = self.to_canonical_etype(etype)
-            return int(self._typed_max_edge_ids[c_etype][-1])
+            return int(self._typed_max_edge_ids[c_etype][lidx])
 
     def metadata(self):
         """Return the partition meta data."""

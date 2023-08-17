@@ -484,7 +484,8 @@ def load_partition_book(part_config, part_id):
 
     node_map = _get_part_ranges(node_map)
     edge_map = _get_part_ranges(edge_map)
-    return RangePartitionBook(part_id, num_parts, node_map, edge_map, ntypes, etypes), \
+    save_first_n = part_metadata['save_first_n_parts'] if 'save_first_n_parts' in part_metadata else -1
+    return RangePartitionBook(part_id, num_parts, node_map, edge_map, ntypes, etypes, save_first_n), \
             part_metadata['graph_name'], ntypes, etypes
 
 def _get_orig_ids(g, sim_g, orig_nids, orig_eids):
@@ -1032,7 +1033,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                      'node_map': node_map_val,
                      'edge_map': edge_map_val,
                      'ntypes': ntypes,
-                     'etypes': etypes}
+                     'etypes': etypes,
+                     'save_first_n_parts': save_first_n_parts} # metis and random use this as flag
     for part_id in range(num_parts):
         part = parts[part_id]
 
@@ -1130,13 +1132,17 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
             'node_feats': os.path.relpath(node_feat_file, out_path),
             'edge_feats': os.path.relpath(edge_feat_file, out_path),
             'part_graph': os.path.relpath(part_graph_file, out_path)}
-        os.makedirs(part_dir, mode=0o775, exist_ok=True)
-        save_tensors(node_feat_file, node_feats)
-        save_tensors(edge_feat_file, edge_feats)
 
-        sort_etypes = len(g.etypes) > 1
-        _save_graphs(part_graph_file, [part], formats=graph_formats,
-            sort_etypes=sort_etypes)
+        if save_first_n_parts > 0 and part_id >= save_first_n_parts:
+            continue # when  save_first_n_parts is valid, skip file of part_id >= n_parts 
+        else:
+            os.makedirs(part_dir, mode=0o775, exist_ok=True)
+            save_tensors(node_feat_file, node_feats)
+            save_tensors(edge_feat_file, edge_feats)
+
+            sort_etypes = len(g.etypes) > 1
+            _save_graphs(part_graph_file, [part], formats=graph_formats,
+                sort_etypes=sort_etypes)
     print('[partition_time]|{}[4/4]|Save partitions (s)|{:.3f}|peak memory (GB)|{:.3f}'.format(
         part_method, time.time() - start, get_peak_mem()))
 
