@@ -314,7 +314,7 @@ def main(args):
     # train_nid is lid when use VCMapPartition
     print(
         "part {}, train: {} (local: {}), val: {} (local: {}), test: {} "
-        "(local: {})".format(
+        "(local: {}) [#local invalid for vc* partitions]".format(
             g.rank(),
             len(train_nid),
             len(np.intersect1d(train_nid.numpy(), local_nid)),
