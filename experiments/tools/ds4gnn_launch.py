@@ -11,7 +11,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--one_id', type=str, required=True, help='a unique id to identify experiments setup')
 
 parser.add_argument('--dataset', type=str, required=True, choices=['ogbpr', 'ogbpa', 'cora'], help='')
-parser.add_argument('--part_algo', type=str, required=True, choices=['random', 'metis', 'vcrandom', 'vcoblivious', 'vcbgl', 'vcns', 'vcst', 'vcdeg', 'vcrgrp'], help='')
+parser.add_argument('--part_algo', type=str, required=True, choices=['random', 'metis', 'vcrandom', 'vcoblivious', 'vcbgl', 'vcns', 'vcns_coverage', 'vcns_proximity' 'vcst', 'vcdeg', 'vcrgrp'], help='')
 parser.add_argument('--part_hop', type=int, required=True, choices=[0, 1], help='')
 parser.add_argument('--n_parts', type=int, required=True, help='')
 parser.add_argument('--use_first_n_parts', type=int, required=True, default=-1, help='')
