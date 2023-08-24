@@ -184,6 +184,27 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
     part_metadata['part_num_edges'] = []
 
     range_end = save_first_n_parts if save_first_n_parts > 0 else num_parts
+    
+#    print("print partition number of node intersections")
+#    part_ids = []
+#    for part_id in range(range_end):
+#        part = parts[part_id]
+#        part_ids.append(part.ndata[NID])
+#    for i in range(range_end):
+#        line = []
+#        for j in range(i):
+#            line.append(0)
+#        line.append(part_ids[i].shape[0])
+#        for j in range(i+1, range_end):
+#            a = part_ids[i].unique()
+#            b = part_ids[j].unique()
+#            c = np.intersect1d(a.numpy(), b.numpy())
+#            line.append(len(c))
+#        l = ""
+#        for e in line:
+#            l = l + f"{e:8d} "
+#        print(f"{i:02d} {l}")
+        
     for part_id in range(range_end):
         part = parts[part_id]
         node_feats = {}
