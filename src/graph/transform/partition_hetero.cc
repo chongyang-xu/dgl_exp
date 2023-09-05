@@ -971,10 +971,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         CHECK_EQ(random_source_nodes->shape[0], N_RW_ORI_NODES);
 
         const uint64_t N_RW_SRC_NODES_CUR_LEN = N_RW_ORI_NODES;
-        const int32_t* src_nodes = original_nodes;
+        int32_t* src_nodes = original_nodes;
         LOG(INFO) << "rw  #cur_len  : " << N_RW_SRC_NODES_CUR_LEN;
 
-        std::qsort(src_nodes, N_RW_ORI_NODES, sizeof(int32_t));
+        std::sort(src_nodes, src_nodes + N_RW_ORI_NODES);
 
         std::vector<ska::flat_hash_map<vc_vid_t, std::vector<vc_vid_t>>> pid2vid2cur(num_parts);
         std::vector<ska::flat_hash_map<vc_vid_t, uint32_t>> pid2vid2cnt(num_parts);
@@ -1079,10 +1079,9 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         TIK(vcns_coverage);
         // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
         const uint64_t N_RW_ORI_NODES = 0.5 * num_nodes / num_parts;
-        const uint64_t N_DEPTH  = 4;
-        const uint32_t ratio = 2;
+        uint64_t N_DEPTH  = 0;
+        const uint32_t ratio = 1;
         LOG(INFO) << "rw  #src_cnt  : " << N_RW_ORI_NODES;
-        LOG(INFO) << "rw  #depth    : " << N_DEPTH;
         // generate BFS source nodes
         IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
               N_RW_ORI_NODES, num_nodes, false);
@@ -1119,8 +1118,10 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
         }
         bool reach_coverage = false;
         //for(uint64_t d = 0; d < N_DEPTH; d++){
-        while(!reach_coverage){
+        while(!reach_coverage && N_DEPTH < 20){
+            LOG(INFO) << "rw  #depth    : " << N_DEPTH;
             reach_coverage = true;
+            N_DEPTH++;
             // initialize by clear and assign
             for(uint32_t pidx=0; pidx < num_parts; pidx++) {
                 pid2vid2cur[pidx].clear();
@@ -1147,12 +1148,12 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
                     auto iter = vid2cur.find(s_vid);
                     if (iter != vid2cur.end()){
                         vid2cnt[s_vid]++;
-                        if( vid2cnt[s_vid] <= (degree[s_vid] >> ratio[d]) ){
+                        if( vid2cnt[s_vid] <= (degree[s_vid] >> ratio) ){
                             vid2cur[s_vid].push_back(d_vid);
                             pid2next[pidx].insert(d_vid);
                         } else {
                             uint32_t r = dgl::RandomEngine::ThreadLocal()->RandInt(1000000000) % vid2cnt[s_vid];
-                            if( r < (degree[s_vid] >> ratio[d]) ){
+                            if( r < (degree[s_vid] >> ratio) ){
                                 vid2cur[s_vid][r] = d_vid;
                                 pid2next[pidx].erase(vid2cur[s_vid][r]);
                                 pid2next[pidx].insert(d_vid);
