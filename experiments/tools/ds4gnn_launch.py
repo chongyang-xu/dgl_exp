@@ -15,7 +15,7 @@ parser.add_argument('--part_algo', type=str, required=True, choices=['random', '
 parser.add_argument('--part_hop', type=int, required=True, choices=[0, 1], help='')
 parser.add_argument('--n_parts', type=int, required=True, help='')
 parser.add_argument('--use_first_n_parts', type=int, required=True, default=-1, help='')
-parser.add_argument('--model', type=str, required=True, choices=['sage', 'gcn'], help='')
+parser.add_argument('--model', type=str, required=True, choices=['sage', 'gcn', 'gat'], help='')
 parser.add_argument('--layers', type=int, required=True, choices=[5, 4, 3, 2], help='')
 parser.add_argument('--batch_size', type=int, required=True, help='')
 parser.add_argument('--sampling', type=str, required=True, choices=['dft', 'bdr'], help='')

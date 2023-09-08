@@ -11,6 +11,7 @@ import dgl
 
 from gcn import GCN
 from graphsage import SAGE as GraphSAGE
+from gat import GAT
 from infer_dist import inference as dist_model_inference
 
 import os
@@ -59,10 +60,15 @@ def run(args, device, data):
     train_nid, val_nid, test_nid, in_feats, n_classes, g = data
     shuffle = True
     # prefetch_node_feats/prefetch_labels are not supported for DistGraph yet.
+
     sampler = dgl.dataloading.NeighborSampler(
         [int(fanout) for fanout in args.fan_out.split(",")],
         stop_at_border=args.stop_at_border
     )
+    # a collator will be created from sampler
+    # #### self.collator = NodeCollator(g, nids, graph_sampler, **collator_kwargs)
+    # the work is done at self.collator
+    # #### self.graph_sampler.sample_blocks(self.g, items)
     dataloader = dgl.dataloading.DistNodeDataLoader(
         g,
         train_nid,
@@ -74,6 +80,10 @@ def run(args, device, data):
     # Define model and optimizer
     if args.model == 'sage':
         model = GraphSAGE(in_feats, args.num_hidden, n_classes,
+                          args.num_layers, F.relu, args.dropout,)
+    elif args.model == 'gat':
+        n_heads = 4
+        model = GAT(in_feats, args.num_hidden, n_classes, n_heads,
                           args.num_layers, F.relu, args.dropout,)
     else:
         assert args.model == 'gcn'
@@ -375,7 +385,7 @@ if __name__ == "__main__":
         type=str,
         default="sage",
         required=True,
-        help="gnn model in(sage, gcn)",
+        help="gnn model in(sage, gcn, gat)",
     )
     parser.add_argument(
         "--stop_at_border", action="store_true", default=False, help="sampler will stop at border"
