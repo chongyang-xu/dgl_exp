@@ -954,127 +954,194 @@ DGL_REGISTER_GLOBAL("partition._CAPI_DGLPartitionVertexCutWithHalo_Hetero")
             vid2adj.clear();
         }
         TOK(vcns);
-      } else if (strategy == "vcns_proximity") {
-        TIK(vcns_proximity);
-        // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
-        const uint64_t N_RW_ORI_NODES = 0.5 * num_nodes / num_parts;
-        const uint64_t N_DEPTH  = 4;
-        const uint32_t ratio[4] = {1, 2, 3, 4};
-        LOG(INFO) << "rw  #src_cnt  : " << N_RW_ORI_NODES;
-        LOG(INFO) << "rw  #depth    : " << N_DEPTH;
-        // generate BFS source nodes
-        IdArray random_source_nodes = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(
-              N_RW_ORI_NODES, num_nodes, false);
-        CHECK_EQ(random_source_nodes->dtype.bits, 32) << "Only supports 32bits tensor for now";
+      } else if (strategy == "randomwalk") {
 
-        int32_t *original_nodes = static_cast<int32_t *>(random_source_nodes->data);
-        CHECK_EQ(random_source_nodes->shape[0], N_RW_ORI_NODES);
+        const uint64_t kSourcePerPart = (num_nodes / num_parts ) * 0.2; // source number is 20% of average #node per partition
+        const uint64_t kWalkSeedPerPart = kSourcePerPart * 0.5; //use 20% of source random walk to generate all
+        const uint64_t kWalkSeed = kWalkSeedPerPart * num_parts;
 
-        const uint64_t N_RW_SRC_NODES_CUR_LEN = N_RW_ORI_NODES;
-        int32_t* src_nodes = original_nodes;
-        LOG(INFO) << "rw  #cur_len  : " << N_RW_SRC_NODES_CUR_LEN;
-
-        std::sort(src_nodes, src_nodes + N_RW_ORI_NODES);
-
-        std::vector<ska::flat_hash_map<vc_vid_t, std::vector<vc_vid_t>>> pid2vid2cur(num_parts);
-        std::vector<ska::flat_hash_map<vc_vid_t, uint32_t>> pid2vid2cnt(num_parts);
-        std::vector<ska::flat_hash_set<vc_vid_t>> pid2next(num_parts);
-        std::vector<uint32_t> degree(num_nodes, 0);
-        for (size_t idx = 0; idx < num_edges; idx++){
-            ++degree[src[idx]];
+        // just construct the adj
+        std::vector<ska::flat_hash_set<vc_vid_t>> vid2set(num_nodes); // for quick look up
+        std::vector<std::vector<vc_vid_t>> vid2adj(num_nodes); // for quick sampling
+        for(auto & adj: vid2adj) adj.reserve(kSourcePerPart);
+        for (size_t idx=0; idx < num_edges; idx++) {
+            vid2set[src[idx]].insert(dst[idx]);
+            vid2adj[src[idx]].push_back(dst[idx]);
         }
 
-        // assign source nodes to paritions randomly
-        const uint64_t PER_PART_N = (N_RW_SRC_NODES_CUR_LEN + num_parts - 1 ) / num_parts;
-        for(uint64_t i=0; i < N_RW_SRC_NODES_CUR_LEN; i++) {
-            pid2next[i/PER_PART_N].insert(src_nodes[i]);
-            if(get_mpid(vc_map[src_nodes[i]]) == VCR_MPID_MASK){
-                set_mpid(vc_map[src_nodes[i]], src_nodes[i] % num_parts);
+        TIK(rw_src);
+        std::vector<std::vector<vc_vid_t>> walk_seeds(num_parts);
+        // get source nodes via random walk
+        IdArray walk_seeds_idarray = dgl::RandomEngine::ThreadLocal()->UniformChoice<int32_t>(kWalkSeed, num_nodes, false);
+        int32_t* pid2seed_ptr = static_cast<int32_t *>(walk_seeds_idarray->data);
+        CHECK_EQ(walk_seeds_idarray->dtype.bits, 32) << "Only supports 32bits tensor for now";
+        CHECK_EQ(walk_seeds_idarray->shape[0], kWalkSeed);
+
+        const float p = 0.1, q_inv = 0.5; // p: prob of return back to source; q_inv: prob for moving away from source
+        for(int i =0; i < num_parts; i++){
+
+            std::vector<vc_vid_t> frontier;
+            for(int n=0; n < kWalkSeedPerPart; n++){
+                frontier.push_back(pid2seed_ptr[kWalkSeedPerPart*i+n]);
+                walk_seeds[i].push_back(pid2seed_ptr[kWalkSeedPerPart*i+n]);
             }
-        }
-        /*
-            for(uint64_t i=0; i < num_nodes; i++){
-                pid2next[i%num_parts].insert(i);
-                if(get_mpid(vc_map[i]) == VCR_MPID_MASK){
-                set_mpid(vc_map[i], i % num_parts);
-                }
-        }
-        */
-        // a csr, a workaround for contructing back to coo
-        ska::flat_hash_map<uint32_t, std::vector<ska::flat_hash_set<vc_vid_t>>> pid2vid2adj;
-        for(int i = 0; i < num_parts; i++){
-            pid2vid2adj[i] = std::vector<ska::flat_hash_set<vc_vid_t>>(num_nodes);
-        }
-        for(uint64_t d = 0; d < N_DEPTH; d++){
-            // initialize by clear and assign
-            for(uint32_t pidx=0; pidx < num_parts; pidx++) {
-                pid2vid2cur[pidx].clear();
-                for(auto vid : pid2next[pidx]){
-                    // fill self vid as default neighbor
-                    std::vector<vc_vid_t> t;
-                    t.reserve(100 >> ratio[d]);
-                    pid2vid2cur[pidx][vid] = std::move(t);
-                    pid2vid2cnt[pidx][vid] = 0;
-                }
-                pid2next[pidx].clear();
-            }
-            // sampling neighbor from edge stream
-            for (size_t idx=0; idx < num_edges; idx++){
-                s_vid = src[idx];
-                d_vid = dst[idx];
 
-                for(uint32_t pidx=0; pidx < num_parts; pidx++){
-                    auto& vid2cur = pid2vid2cur[pidx];
-                    auto& vid2cnt = pid2vid2cnt[pidx];
-                    auto iter = vid2cur.find(s_vid);
-                    if (iter != vid2cur.end()){
-                        vid2cnt[s_vid]++;
-                        if( vid2cnt[s_vid] <= (degree[s_vid] >> ratio[d]) ){
-                            vid2cur[s_vid].push_back(d_vid);
-                            pid2next[pidx].insert(d_vid);
-                        } else {
-                            uint32_t r = dgl::RandomEngine::ThreadLocal()->RandInt(1000000000) % vid2cnt[s_vid];
-                            if( r < (degree[s_vid] >> ratio[d]) ){
-                                vid2cur[s_vid][r] = d_vid;
-                                pid2next[pidx].erase(vid2cur[s_vid][r]);
-                                pid2next[pidx].insert(d_vid);
-                            }
+            while(true) {
+                if(walk_seeds[i].size() >= kSourcePerPart){ // self loop or break ? break here
+                    break;
+                }
+                auto idx  = dgl::RandomEngine::ThreadLocal()->RandInt(frontier.size());
+                auto cur  = frontier[idx];
+
+                if(vid2adj[cur].size() < 1){
+                    uint32_t empty_counter = 0;
+                    for(auto v:  frontier){
+                        empty_counter += vid2adj[v].size();
+                    }
+                    if(empty_counter == 0){
+                        LOG(INFO) << "part id: " << i << " can't find enough source, best effort";
+                        break;
+                    } else {
+                        continue; 
+                    }
+                }
+
+                auto nidx = dgl::RandomEngine::ThreadLocal()->RandInt(vid2adj[cur].size());
+                auto candidate = vid2adj[cur][nidx];
+
+                auto f = dgl::RandomEngine::ThreadLocal()->RandInt(1000) / 1000.0;
+
+                auto iter = std::find(frontier.begin(), frontier.end(), candidate);
+                if( iter != frontier.end() ){
+                    if(f < p){
+                        // pick candidate
+                        walk_seeds[i].push_back(candidate);
+                        // but no need to update frontier or frontier_index
+                    }
+                }else{
+                    bool is_neighbor_of_last = false;
+                    for(auto & v: frontier){
+                        if ( v == cur) continue; // skip itself
+                        if (vid2set[v].find(candidate) != vid2set[v].end()) {
+                            is_neighbor_of_last = true;
+                            break;
                         }
                     }
-                }
-            }
-            // assign sampled edge to each partition
-            for(uint32_t pidx=0; pidx < num_parts; pidx++){
-                auto& vid2cur = pid2vid2cur[pidx];
-                auto& vid2adj = pid2vid2adj[pidx];
-                for(auto p : vid2cur){
-                    // best effort main partition assignment
-                    if(get_mpid(vc_map[p.first]) == VCR_MPID_MASK){
-                        set_mpid(vc_map[p.first], pidx);
+                    if(is_neighbor_of_last){
+                        if(f < q_inv){
+                            walk_seeds[i].push_back(candidate);
+                            frontier[idx] = candidate;
+                        }
+                    }else{
+                        walk_seeds[i].push_back(candidate);
+                        frontier[idx] = candidate;
                     }
-                    for(auto v: p.second){ // csr, has no duplicated edge
-                        vid2adj[p.first].insert(v);
-                        if(get_mpid(vc_map[v]) == VCR_MPID_MASK){
-                            set_mpid(vc_map[v], pidx);
+                }
+
+            }
+        }
+        TOK(rw_src);
+        LOG(INFO) << "#source nodes per partition : " << kSourcePerPart;
+
+        // random walk based partition
+        TIK(rw_partition);
+        const float fp = 0.5, fq_inv = 0.5;
+        //runtime::parallel_for(0, num_parts, [&](uint64_t b, uint64_t e) {
+        uint64_t b = 0;
+        uint64_t e = num_parts;
+        for (auto l_pid = b; l_pid < e; l_pid++) {
+            LOG(INFO) << "part id: " << l_pid;
+            std::vector<vc_vid_t> frontier = walk_seeds[l_pid];
+            ska::flat_hash_set<vc_vid_t> frontier_index = ska::flat_hash_set<vc_vid_t>(frontier.begin(), frontier.end());
+            while(true){
+                // stop condition is coverage ratio
+                if (pid2src[l_pid].size() > 2 * num_edges / num_parts)
+                    break;
+
+                auto idx  = dgl::RandomEngine::ThreadLocal()->RandInt(frontier.size());
+                auto cur  = frontier[idx];
+
+                if(vid2adj[cur].size() < 1){
+                    uint32_t empty_counter = 0;
+                    for(auto v:  frontier){
+                        empty_counter += vid2adj[v].size();
+                    }
+                    if(empty_counter == 0){
+                        LOG(INFO) << "part id: " << l_pid << ", #edge: " << pid2src[l_pid].size() << "(target=" << num_edges/num_parts  << ")";
+                        break;
+                    } else {
+                        continue; 
+                    }
+                }
+
+                auto nidx = dgl::RandomEngine::ThreadLocal()->RandInt(vid2adj[cur].size());
+                auto candidate = vid2adj[cur][nidx];
+
+                auto f = dgl::RandomEngine::ThreadLocal()->RandInt(1000) / 1000.0;
+
+                auto iter = frontier_index.find(candidate);
+                if( iter != frontier_index.end() ){
+                    if(f < fp){
+                        // pick candidate
+                        pid2src[l_pid].push_back(cur);
+                        pid2dst[l_pid].push_back(candidate);
+                        // but no need to update frontier or frontier_index
+                    }
+                }else{
+                    bool is_neighbor_of_last = false;
+                    for(auto & v: frontier){
+                        if ( v == cur) continue; // skip itself
+                        if (vid2set[v].find(candidate) != vid2set[v].end()) {
+                            is_neighbor_of_last = true;
+                            break;
                         }
                     }
+                    if(is_neighbor_of_last){
+                        if(f < fq_inv){
+                            pid2src[l_pid].push_back(cur);
+                            pid2dst[l_pid].push_back(candidate);
+
+                            frontier[idx] = candidate;
+                            frontier_index.erase(cur);
+                            frontier_index.insert(candidate);
+                        }
+                    }else{
+                        pid2src[l_pid].push_back(cur);
+                        pid2dst[l_pid].push_back(candidate);
+
+                        frontier[idx] = candidate;
+                        frontier_index.erase(cur);
+                        frontier_index.insert(candidate);
+                    }
                 }
             }
         }
-        // workaround : constructing coo from csr
-        for(uint32_t pidx=0; pidx < num_parts; pidx++){
-            auto& src = pid2src[pidx];
-            auto& dst = pid2dst[pidx];
-            auto& vid2adj = pid2vid2adj[pidx];
-            for(uint32_t u=0; u < vid2adj.size(); u++){
-                for(auto v: vid2adj[u]){
-                    src.push_back(u);
-                    dst.push_back(v);
+        //});
+        TOK(rw_partition);
+
+        // assign main partition id
+        TIK(rw_main_part_id);
+        for(uint32_t i = 0; i < num_parts; i++) {
+            auto frontier = walk_seeds[i];
+            for(auto vid : frontier)
+                if( get_mpid(vc_map[vid]) == VCR_MPID_MASK){
+                    set_mpid(vc_map[vid], i);
+                }
+        }
+        for(int i = 0; i < num_parts; i++) {
+            for(int e = 0; e < pid2src[i].size(); e++) {
+                const auto& src = pid2src[i][e];
+                const auto& dst = pid2dst[i][e];
+                if( get_mpid(vc_map[src]) == VCR_MPID_MASK){
+                    set_mpid(vc_map[src], src % num_parts);
+                }
+                if( get_mpid(vc_map[dst]) == VCR_MPID_MASK){
+                    set_mpid(vc_map[dst], src % num_parts);
                 }
             }
-            vid2adj.clear();
         }
-        TOK(vcns_proximity);
+
+        TOK(rw_main_part_id);
       } else if (strategy == "vcns_coverage") {
         TIK(vcns_coverage);
         // const uint64_t N_RW_ORI_NODES = 10 * static_cast<int>(std::log2(num_nodes)) * num_parts;
