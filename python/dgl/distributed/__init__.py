@@ -18,3 +18,4 @@ from .rpc import *
 from .rpc_client import connect_to_server, shutdown_servers
 from .rpc_server import start_server
 from .server_state import ServerState
+from .training_controller import TrainController
