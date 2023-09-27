@@ -610,18 +610,19 @@ def submit_jobs(args, udf_command, dry_run=False):
             server_count_per_machine = args.num_servers
     # Get partition info of the graph data
     part_config = os.path.join(args.workspace, args.part_config)
-    with open(part_config) as conf_f:
-        part_metadata = json.load(conf_f)
-    assert "num_parts" in part_metadata, "num_parts does not exist."
-    # The number of partitions must match the number of machines in the cluster.
-    if 'save_first_n_parts' in part_metadata and part_metadata['save_first_n_parts'] > 0:
-        assert part_metadata["save_first_n_parts"] == len(
-            hosts
-        ) * args.num_servers , "The number of graph partitions has to match the number of machines in the cluster."
-    else:
-        assert part_metadata["num_parts"] == len(
-            hosts
-        ) * args.num_servers , "The number of graph partitions has to match the number of machines in the cluster."
+    if part_config[-5:] != ".yaml":
+        with open(part_config) as conf_f:
+            part_metadata = json.load(conf_f)
+        assert "num_parts" in part_metadata, "num_parts does not exist."
+        # The number of partitions must match the number of machines in the cluster.
+        if 'save_first_n_parts' in part_metadata and part_metadata['save_first_n_parts'] > 0:
+            assert part_metadata["save_first_n_parts"] == len(
+                hosts
+            ) * args.num_servers , "The number of graph partitions has to match the number of machines in the cluster."
+        else:
+            assert part_metadata["num_parts"] == len(
+                hosts
+            ) * args.num_servers , "The number of graph partitions has to match the number of machines in the cluster."
 
     state_q = queue.Queue()
     tot_num_clients = args.num_trainers * (1 + args.num_samplers) * len(hosts)

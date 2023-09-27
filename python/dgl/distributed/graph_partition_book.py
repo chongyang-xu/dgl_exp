@@ -1127,7 +1127,7 @@ class PartitionPolicy(object):
         A graph partition book
     """
 
-    def __init__(self, policy_str, partition_book):
+    def __init__(self, policy_str, partition_book, partition_grouping_mode=False, graph_name=""):
         assert (policy_str.startswith(NODE_PART_POLICY) or
             policy_str.startswith(EDGE_PART_POLICY)), (
                 f"policy_str must start with {NODE_PART_POLICY} or "
@@ -1137,10 +1137,17 @@ class PartitionPolicy(object):
             policy_str = NODE_PART_POLICY + POLICY_DELIMITER + DEFAULT_NTYPE
         if EDGE_PART_POLICY == policy_str:
             policy_str = EDGE_PART_POLICY + POLICY_DELIMITER + DEFAULT_ETYPE[1]
+
+        if partition_grouping_mode:
+            policy_str = policy_str + POLICY_DELIMITER + graph_name
+
         self._policy_str = policy_str
         self._part_id = partition_book.partid
         self._partition_book = partition_book
-        part_policy, self._type_name = policy_str.split(POLICY_DELIMITER, 1)
+        res = policy_str.split(POLICY_DELIMITER, 2)
+        part_policy = res[0]
+        self._type_name = res[1]
+
         if part_policy == EDGE_PART_POLICY:
             self._type_name = _etype_str_to_tuple(self._type_name)
         self._is_node = self.policy_str.startswith(NODE_PART_POLICY)
@@ -1274,23 +1281,25 @@ class PartitionPolicy(object):
 class NodePartitionPolicy(PartitionPolicy):
     """Partition policy for nodes."""
 
-    def __init__(self, partition_book, ntype=DEFAULT_NTYPE):
+    def __init__(self, partition_book, ntype=DEFAULT_NTYPE, partition_grouping_mode=False, graph_name=""):
+        input_str = NODE_PART_POLICY + POLICY_DELIMITER + ntype
         super(NodePartitionPolicy, self).__init__(
-            NODE_PART_POLICY + POLICY_DELIMITER + ntype, partition_book
+            input_str, partition_book, partition_grouping_mode, graph_name
         )
 
 
 class EdgePartitionPolicy(PartitionPolicy):
     """Partition policy for edges."""
 
-    def __init__(self, partition_book, etype=DEFAULT_ETYPE):
+    def __init__(self, partition_book, etype=DEFAULT_ETYPE, partition_grouping_mode=False, graph_name=""):
         assert isinstance(etype, tuple) and len(etype) == 3, \
             f"Expect canonical edge type in a triplet of string, but got {etype}."
+        input_str = EDGE_PART_POLICY + POLICY_DELIMITER + _etype_tuple_to_str(etype)
         super(EdgePartitionPolicy, self).__init__(
-            EDGE_PART_POLICY + POLICY_DELIMITER + _etype_tuple_to_str(etype),
-            partition_book
+            input_str,
+            partition_book,
+            partition_grouping_mode, graph_name
         )
-
 
 class HeteroDataName(object):
     """The data name in a heterogeneous graph.
@@ -1309,8 +1318,7 @@ class HeteroDataName(object):
     data_name : str
         The name of the data.
     """
-
-    def __init__(self, is_node, entity_type, data_name, disable_backup_server=False, machine_name="<invalid>"):
+    def __init__(self, is_node, entity_type, data_name, disable_backup_server=False, machine_name="<invalid>", partition_grouping_mode=False, graph_name_in=""):
         self._policy = NODE_PART_POLICY if is_node else EDGE_PART_POLICY
         if not is_node:
             assert isinstance(entity_type, tuple) and len(entity_type) == 3, \
@@ -1319,13 +1327,19 @@ class HeteroDataName(object):
         self._entity_type = entity_type
         self.data_name = machine_name if disable_backup_server else data_name
 
+        self.partition_grouping_mode = partition_grouping_mode
+        self.suffix = graph_name_in
+
     @property
     def policy_str(self):
         """concatenate policy and entity type into string"""
         entity_type = self.get_type()
         if self.is_edge():
             entity_type = _etype_tuple_to_str(entity_type)
-        return self._policy + POLICY_DELIMITER + entity_type
+        if self.partition_grouping_mode:
+            return self._policy + POLICY_DELIMITER + entity_type + POLICY_DELIMITER + self.suffix
+        else:
+            return self._policy + POLICY_DELIMITER + entity_type
 
     def is_node(self):
         """Is this the name of node data"""
@@ -1354,8 +1368,7 @@ class HeteroDataName(object):
         """
         return self.policy_str + POLICY_DELIMITER + self.data_name
 
-
-def parse_hetero_data_name(name):
+def parse_hetero_data_name(name, partition_grouping_mode=False):
     """Parse data name and create HeteroDataName.
 
     The data name has a specialized format. We can parse the name to determine if
@@ -1372,9 +1385,15 @@ def parse_hetero_data_name(name):
     HeteroDataName
     """
     names = name.split(POLICY_DELIMITER)
-    assert len(names) == 3, "{} is not a valid heterograph data name".format(
-        name
-    )
+    if partition_grouping_mode:
+        assert len(names) == 4, "{} is not a valid heterograph data name under partition_grouping_mode".format(
+            name
+        )
+    else:
+        assert len(names) == 3, "{} is not a valid heterograph data name under none partition_grouping_mode".format(
+            name
+        )
+
     assert names[0] in (
         NODE_PART_POLICY,
         EDGE_PART_POLICY,
@@ -1383,6 +1402,11 @@ def parse_hetero_data_name(name):
     entity_type = names[1]
     if not is_node:
         entity_type = _etype_str_to_tuple(entity_type)
-    return HeteroDataName(
-        is_node, entity_type, names[2]
-    )
+    if partition_grouping_mode:
+        return HeteroDataName(
+            is_node, entity_type, names[3], partition_grouping_mode=partition_grouping_mode, graph_name_in=names[2]
+        )
+    else:
+        return HeteroDataName(
+            is_node, entity_type, names[2]
+        )

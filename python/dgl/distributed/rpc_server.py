@@ -5,6 +5,7 @@ import time
 
 from ..base import DGLError
 from . import rpc
+from . import role, kvstore, dist_graph
 from .constants import MAX_QUEUE_SIZE, SERVER_EXIT, SERVER_KEEP_ALIVE
 
 
@@ -13,7 +14,9 @@ def start_server(
     ip_config,
     num_servers,
     num_clients,
-    server_state,
+    server_state_group,
+    graph_name_group,
+    partition_grouping_mode,
     max_queue_size=MAX_QUEUE_SIZE,
     net_type="socket",
 ):
@@ -58,7 +61,7 @@ def start_server(
     assert net_type in ("socket", "tensorpipe"), (
         "net_type (%s) can only be 'socket' or 'tensorpipe'" % net_type
     )
-    if server_state.keep_alive:
+    if server_state_group[0].keep_alive:
         assert (
             net_type == "tensorpipe"
         ), "net_type can only be 'tensorpipe' if 'keep_alive' is enabled."
@@ -151,7 +154,41 @@ def start_server(
             recv_clients[group_id].append(req.ip_addr)
             continue
 
-        res = req.process_request(server_state)
+        if not partition_grouping_mode:
+            res = req.process_request(server_state_group[0])
+        else:
+            ss_idx = 0
+            graph_name_tmp = ""
+            if isinstance(req, rpc.GetNumberClientsRequest):
+                pass
+            elif  isinstance(req, role.RegisterRoleRequest):
+                pass
+            elif  isinstance(req, role.GetRoleRequest):
+                pass
+            elif isinstance(req, kvstore.BarrierRequest):
+                pass
+            elif isinstance(req, kvstore.GetSharedDataRequest):
+                _, graph_name_tmp = req.__getstate__()
+            elif isinstance(req, kvstore.GetPartShapeRequest):
+                _, graph_name_tmp = req.__getstate__()
+            elif isinstance(req, dist_graph.InitGraphRequest):
+                graph_name_tmp = req.__getstate__()
+            elif isinstance(req, kvstore.PullRequest):
+                pass
+            elif isinstance(req, rpc.ClientBarrierRequest):
+                pass
+            elif isinstance(req, rpc.ShutDownRequest):
+                pass
+            elif isinstance(req, kvstore.InitDataRequest):
+                pass
+            else:
+                assert False, f"{req} is not supported in partition_grouping_mode"
+            for i in range(len(graph_name_group)):
+                if graph_name_tmp == graph_name_group[i]:
+                    ss_idx = i
+                    break
+            res = req.process_request(server_state_group[ss_idx])
+
         if res is not None:
             if isinstance(res, list):
                 for response in res:

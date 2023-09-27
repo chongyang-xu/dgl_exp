@@ -363,26 +363,34 @@ class GetSharedDataRequest(rpc.Request):
     msg : string
         string message
     """
-    def __init__(self, msg):
+    def __init__(self, msg, graph_name=""):
         self.msg = msg
+        self.graph_name = graph_name
 
     def __getstate__(self):
-        return self.msg
+        return self.msg, self.graph_name
 
     def __setstate__(self, state):
-        self.msg = state
+        self.msg, self.graph_name = state
 
     def process_request(self, server_state):
         assert self.msg == GET_SHARED_MSG
         meta = {}
         kv_store = server_state.kv_store
         for name, data in kv_store.data_store.items():
+            #print(f"{name} : {data}")
             if server_state.keep_alive:
                 if name not in kv_store.orig_data:
                     continue
             meta[name] = (F.shape(data),
                           F.reverse_data_type_dict[F.dtype(data)],
                           kv_store.part_policy[name].policy_str)
+        #print('-'*50)
+        #print(self.graph_name)
+        #for k, v in kv_store.part_policy.items():
+        #    print(f"{k} : {v.policy_str}")
+        #print('-'*50)
+        #print(meta)
         res = GetSharedDataResponse(meta)
         return res
 
@@ -417,14 +425,15 @@ class GetPartShapeRequest(rpc.Request):
     name : str
         data name
     """
-    def __init__(self, name):
+    def __init__(self, name, graph_name=""):
         self.name = name
+        self.graph_name = graph_name
 
     def __getstate__(self):
-        return self.name
+        return self.name, self.graph_name
 
     def __setstate__(self, state):
-        self.name = state
+        self.name, self.graph_name = state
 
     def process_request(self, server_state):
         kv_store = server_state.kv_store
@@ -1131,6 +1140,10 @@ class KVClient(object):
         # The servers may handle the duplicated initializations.
         part_shape = shape.copy()
         part_shape[0] = part_policy.get_part_size()
+
+        # print("\\"*50)
+        # print(name, self._part_policy)
+
         request = InitDataRequest(name,
                                   tuple(part_shape),
                                   F.reverse_data_type_dict[dtype],
@@ -1238,7 +1251,7 @@ class KVClient(object):
         self.barrier()
 
     #TODO(ds4gnn): main parts
-    def map_shared_data(self, partition_book):
+    def map_shared_data(self, partition_book, partition_grouping_mode=False, graph_name=""):
         """Mapping shared-memory tensor from server to client.
 
         Parameters
@@ -1248,15 +1261,15 @@ class KVClient(object):
         """
         # Get all partition policies
         for ntype in partition_book.ntypes:
-            policy = NodePartitionPolicy(partition_book, ntype)
+            policy = NodePartitionPolicy(partition_book, ntype, partition_grouping_mode=partition_grouping_mode, graph_name=graph_name)
             self._all_possible_part_policy[policy.policy_str] = policy
         for etype in partition_book.canonical_etypes:
-            policy = EdgePartitionPolicy(partition_book, etype)
+            policy = EdgePartitionPolicy(partition_book, etype, partition_grouping_mode=partition_grouping_mode, graph_name=graph_name)
             self._all_possible_part_policy[policy.policy_str] = policy
 
         # Get shared data from server side
         self.barrier()
-        request = GetSharedDataRequest(GET_SHARED_MSG)
+        request = GetSharedDataRequest(GET_SHARED_MSG, graph_name)
         rpc.send_request(self._main_server_id, request)
         response = rpc.recv_response()
         for name, meta in response.meta.items():
@@ -1264,14 +1277,23 @@ class KVClient(object):
                 _, n_part = self.name_rm_part(name)
                 assert n_part == self._part_id
             if name not in self._data_name_list:
-                shape, dtype, policy_str = meta
-                assert policy_str in self._all_possible_part_policy
-                shared_data = empty_shared_mem(name+'-kvdata-', False, shape, dtype)
-                dlpack = shared_data.to_dlpack()
-                self._data_store[name] = F.zerocopy_from_dlpack(dlpack)
-                self._part_policy[name] = self._all_possible_part_policy[policy_str]
-                self._pull_handlers[name] = default_pull_handler
-                self._push_handlers[name] = default_push_handler
+                enter_flag1 = partition_grouping_mode and graph_name in name
+                enter_flag2 = not partition_grouping_mode
+                if enter_flag1 or enter_flag2:
+                    shape, dtype, policy_str = meta
+                    #if policy_str not in self._all_possible_part_policy:
+                    #    print("="*100)
+                    #    print(policy_str, graph_name, self._data_name_list)
+                    #    print(self._all_possible_part_policy)
+                    #    print("="*100)
+
+                    assert policy_str in self._all_possible_part_policy
+                    shared_data = empty_shared_mem(name+'-kvdata-', False, shape, dtype)
+                    dlpack = shared_data.to_dlpack()
+                    self._data_store[name] = F.zerocopy_from_dlpack(dlpack)
+                    self._part_policy[name] = self._all_possible_part_policy[policy_str]
+                    self._pull_handlers[name] = default_pull_handler
+                    self._push_handlers[name] = default_push_handler
 
         # Get full data shape across servers
         if self.disable_backup_server:
@@ -1279,43 +1301,52 @@ class KVClient(object):
                 req_name, n_part = self.name_rm_part(name)
                 assert n_part == self._part_id
                 if name not in self._data_name_list:
-                    shape, _, _ = meta
-                    data_shape = list(shape)
-                    data_shape[0] = 0
-                    request = GetPartShapeRequest(req_name)
-                    # send request to all main server nodes
-                    for s_id in range(self._server_count):
-                        rpc.send_request(s_id, request)
-                    # recv response from all the main server nodes
-                    for _ in range(self._server_count):
-                        res = rpc.recv_response()
-                        data_shape[0] += res.shape[0]
-                    self._full_data_shape[name] = tuple(data_shape)
+                    enter_flag1 = partition_grouping_mode and graph_name in name
+                    enter_flag2 = not partition_grouping_mode
+                    if enter_flag1 or enter_flag2:
+                        shape, _, _ = meta
+                        data_shape = list(shape)
+                        data_shape[0] = 0
+                        request = GetPartShapeRequest(req_name, graph_name)
+                        # send request to all main server nodes
+                        for s_id in range(self._server_count):
+                            rpc.send_request(s_id, request)
+                        # recv response from all the main server nodes
+                        for _ in range(self._server_count):
+                            res = rpc.recv_response()
+                            data_shape[0] += res.shape[0]
+                        self._full_data_shape[name] = tuple(data_shape)
         else:
             for name, meta in response.meta.items():
                 if name not in self._data_name_list:
-                    shape, _, _ = meta
-                    data_shape = list(shape)
-                    data_shape[0] = 0
-                    request = GetPartShapeRequest(name)
-                    # send request to all main server nodes
-                    for machine_id in range(self._machine_count):
-                        server_id = machine_id * self._group_count
-                        rpc.send_request(server_id, request)
-                    # recv response from all the main server nodes
-                    for _ in range(self._machine_count):
-                        res = rpc.recv_response()
-                        data_shape[0] += res.shape[0]
-                    self._full_data_shape[name] = tuple(data_shape)
+                    enter_flag1 = partition_grouping_mode and graph_name in name
+                    enter_flag2 = not partition_grouping_mode
+                    if enter_flag1 or enter_flag2:
+                        shape, _, _ = meta
+                        data_shape = list(shape)
+                        data_shape[0] = 0
+                        request = GetPartShapeRequest(name, graph_name)
+                        # send request to all main server nodes
+                        for machine_id in range(self._machine_count):
+                            server_id = machine_id * self._group_count
+                            rpc.send_request(server_id, request)
+                        # recv response from all the main server nodes
+                        for _ in range(self._machine_count):
+                            res = rpc.recv_response()
+                            data_shape[0] += res.shape[0]
+                        self._full_data_shape[name] = tuple(data_shape)
 
         if self.disable_backup_server:
             for name, meta in response.meta.items():
                 if name not in self._data_name_list:
-                    assert name not in self._gdata_name_list
-                    self._data_name_list.add(name)
-                    # map_shared_data happens only at DistGraph initialization
-                    # TODO(xiangsx): We assume there is no non-graph data initialized at this time
-                    self._gdata_name_list.add(name)
+                    enter_flag1 = partition_grouping_mode and graph_name in name
+                    enter_flag2 = not partition_grouping_mode
+                    if enter_flag1 or enter_flag2:
+                        assert name not in self._gdata_name_list
+                        self._data_name_list.add(name)
+                        # map_shared_data happens only at DistGraph initialization
+                        # TODO(xiangsx): We assume there is no non-graph data initialized at this time
+                        self._gdata_name_list.add(name)
                 else:
                     assert name in self._gdata_name_list
             self.barrier()
@@ -1324,6 +1355,11 @@ class KVClient(object):
 
         # Send meta data to backup servers
         for name, meta in response.meta.items():
+            enter_flag1 = partition_grouping_mode and graph_name in name
+            enter_flag2 = not partition_grouping_mode
+            if not (enter_flag1 or enter_flag2):
+                continue
+
             shape, dtype, policy_str = meta
             request = SendMetaToBackupRequest(name, dtype, shape, policy_str,
                                               self._pull_handlers[name],
@@ -1371,6 +1407,12 @@ class KVClient(object):
 
         if self.disable_backup_server:
             name = self.name_on_machine(name)
+
+        #if name not in self._data_store.keys():
+        #    print('/'*100)
+        #    print(name, self._data_store.keys())
+        #    print('/'*100)
+        #    exit(0)
 
         data_type = F.dtype(self._data_store[name])
         data_shape = self._full_data_shape[name]

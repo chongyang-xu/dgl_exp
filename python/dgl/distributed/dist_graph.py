@@ -6,6 +6,7 @@ from collections import namedtuple
 import os
 import gc
 import numpy as np
+import yaml
 
 from ..heterograph import DGLGraph
 from ..convert import heterograph as dgl_heterograph
@@ -35,6 +36,7 @@ from .graph_services import out_degrees as dist_out_degrees
 from .graph_services import in_degrees as dist_in_degrees
 from .dist_tensor import DistTensor
 from .partition import RESERVED_FIELD_DTYPE
+from .graph_partition_book import POLICY_DELIMITER
 
 INIT_GRAPH = 800001
 
@@ -303,19 +305,53 @@ class DistGraphServer(KVServer):
                                               num_clients=num_clients,
                                               disable_backup_server=disable_backup_server
                                               )
+
+        if part_config[-5:] == ".yaml":
+            # group part_conf
+            self.partition_grouping_mode = True
+        else:
+            assert part_config[-4:] == ".json", f"validating part_conf file type failed {part_config[-4:]} != .json"
+            self.partition_grouping_mode = False
+
         self.ip_config = ip_config
         self.num_servers = num_servers
         self.keep_alive = keep_alive
         self.net_type = net_type
+
+        self.client_g_group = []
+        self.gpb_group = []
+        self.graph_name_group = []
+
+        if self.partition_grouping_mode:
+            with open(part_config, 'r') as f:
+                data_config_yaml = yaml.safe_load(f)
+
+            for part_config in data_config_yaml["partitions"]:
+                graph_name_in_yaml = list(part_config.keys())[0]
+                json_cfg_file = list(part_config.values())[0]
+                self.init_for_graph_partition_group(graph_name_in_yaml, json_cfg_file, disable_shared_mem, graph_format)
+        else:
+            self.init_for_graph_partition_group("", part_config, disable_shared_mem, graph_format)
+
+    def init_for_graph_partition_group(self, graph_name_in, json_cfg_file, disable_shared_mem, graph_format):
         # Load graph partition data.
         if self.is_backup_server():
             # The backup server doesn't load the graph partition. It'll initialized afterwards.
-            self.gpb, graph_name, ntypes, etypes = load_partition_book(part_config, self.part_id)
-            self.client_g = None
+            gpb, graph_name, ntypes, etypes = load_partition_book(json_cfg_file, self.part_id)
+            client_g = None
+
+            if self.partition_grouping_mode:
+                # in group mode, graph_name is not read from partition book, but specifies from input parameter
+                graph_name = graph_name_in
+
         else:
             # Loading of node/edge_feats are deferred to lower the peak memory consumption.
-            self.client_g, _, _, self.gpb, graph_name, \
-                    ntypes, etypes = load_partition(part_config, self.part_id, load_feats=False)
+            client_g, _, _, gpb, graph_name_, \
+                    ntypes, etypes = load_partition(json_cfg_file, self.part_id, load_feats=False)
+
+            if self.partition_grouping_mode:
+                # in group mode, graph_name is not read from partition book, but specifies from input parameter
+                graph_name = graph_name_in
 
             # NOTE(ds4gnn): assign each partion a unique name, since we have multiple partitions on each machine
             if self.disable_backup_server:
@@ -327,52 +363,64 @@ class DistGraphServer(KVServer):
             #   We'd better store all dtypes when mapping to shared memory
             #   and map back with original dtypes.
             for k, dtype in RESERVED_FIELD_DTYPE.items():
-                if k in self.client_g.ndata:
-                    self.client_g.ndata[k] = F.astype(
-                        self.client_g.ndata[k], dtype)
-                if k in self.client_g.edata:
-                    self.client_g.edata[k] = F.astype(
-                        self.client_g.edata[k], dtype)
+                if k in client_g.ndata:
+                    client_g.ndata[k] = F.astype(
+                        client_g.ndata[k], dtype)
+                if k in client_g.edata:
+                    client_g.edata[k] = F.astype(
+                        client_g.edata[k], dtype)
             # Create the graph formats specified the users.
-            self.client_g = self.client_g.formats(graph_format)
-            self.client_g.create_formats_()
+            client_g = client_g.formats(graph_format)
+            client_g.create_formats_()
             if not disable_shared_mem:
                 # TODO(ds4gnn): disable_backup_server, how to copy, how to naming?
                 # self.client_g is locally loaded partition
-                self.client_g = _copy_graph_to_shared_mem(self.client_g, graph_name, graph_format)
+                client_g = _copy_graph_to_shared_mem(client_g, graph_name, graph_format)
 
         if not disable_shared_mem:
-            self.gpb.shared_memory(graph_name)
-        assert self.gpb.partid == self.part_id
+            gpb.shared_memory(graph_name)
+        assert gpb.partid == self.part_id
+        ##################################################
+        # make sure node_name makes sense in grouping mode
+        ##################################################
         for ntype in ntypes:
-            node_name = HeteroDataName(True, ntype, "", self.disable_backup_server, self.name_on_machine(""))
-            self.add_part_policy(PartitionPolicy(node_name.policy_str, self.gpb))
+            # add graph_name_in for node_name
+            node_name = HeteroDataName(True, ntype, "", self.disable_backup_server, self.name_on_machine(""), partition_grouping_mode=self.partition_grouping_mode, graph_name_in=graph_name_in)
+            self.add_part_policy(PartitionPolicy(node_name.policy_str, gpb))
         for etype in etypes:
-            edge_name = HeteroDataName(False, etype, "", self.disable_backup_server, self.name_on_machine(""))
-            self.add_part_policy(PartitionPolicy(edge_name.policy_str, self.gpb))
+            edge_name = HeteroDataName(False, etype, "", self.disable_backup_server, self.name_on_machine(""), partition_grouping_mode=self.partition_grouping_mode, graph_name_in=graph_name_in)
+            self.add_part_policy(PartitionPolicy(edge_name.policy_str, gpb))
 
         if not self.is_backup_server():
-            node_feats, _ = load_partition_feats(part_config, self.part_id,
+            node_feats, _ = load_partition_feats(json_cfg_file, self.part_id,
                 load_nodes=True, load_edges=False)
             for name in node_feats:
                 # The feature name has the following format: node_type + "/" + feature_name to avoid
                 # feature name collision for different node types.
                 ntype, feat_name = name.split('/')
-                data_name = HeteroDataName(True, ntype, feat_name, self.disable_backup_server, self.name_on_machine(feat_name))
+                data_name = HeteroDataName(True, ntype, feat_name, self.disable_backup_server, self.name_on_machine(feat_name), partition_grouping_mode=self.partition_grouping_mode, graph_name_in=graph_name_in)
+                #############################################################
+                # make sure init_data/orig_data makes sense in grouping mode
+                #############################################################
+                #print(f"line 405: {str(data_name)}")
                 self.init_data(name=str(data_name), policy_str=data_name.policy_str,
                                data_tensor=node_feats[name])
                 self.orig_data.add(str(data_name))
             # Let's free once node features are copied to shared memory
             del node_feats
             gc.collect()
-            _, edge_feats = load_partition_feats(part_config, self.part_id,
+            _, edge_feats = load_partition_feats(json_cfg_file, self.part_id,
                 load_nodes=False, load_edges=True)
             for name in edge_feats:
                 # The feature name has the following format: edge_type + "/" + feature_name to avoid
                 # feature name collision for different edge types.
                 etype, feat_name = name.split('/')
                 etype = _etype_str_to_tuple(etype)
-                data_name = HeteroDataName(False, etype, feat_name, self.disable_backup_server, self.name_on_machine(feat_name))
+                data_name = HeteroDataName(False, etype, feat_name, self.disable_backup_server, self.name_on_machine(feat_name), partition_grouping_mode=self.partition_grouping_mode, graph_name_in=graph_name_in)
+                #############################################################
+                # make sure init_data/orig_data makes sense in grouping mode
+                #############################################################
+
                 self.init_data(name=str(data_name), policy_str=data_name.policy_str,
                                data_tensor=edge_feats[name])
                 self.orig_data.add(str(data_name))
@@ -380,19 +428,41 @@ class DistGraphServer(KVServer):
             del edge_feats
             gc.collect()
 
+        # book keeping for grouping mode
+        if self.partition_grouping_mode:
+            self.client_g_group.append(client_g)
+            self.gpb_group.append(gpb)
+            self.graph_name_group.append(graph_name_in)
+        else:
+            self.client_g = client_g
+            self.gpb = gpb
+
     def start(self):
         """ Start graph store server.
         """
         # start server
-        server_state = ServerState(kv_store=self, local_g=self.client_g,
-                                   partition_book=self.gpb, keep_alive=self.keep_alive)
+        # group mode
+        server_state_group = []
+        if self.partition_grouping_mode:
+            for i in range(len(self.client_g_group)):
+                # all server_state must have identical keep_alive value
+                server_state = ServerState(kv_store=self, local_g=self.client_g_group[i],
+                                partition_book=self.gpb_group[i], keep_alive=self.keep_alive)
+                server_state_group.append(server_state)
+        else:
+            server_state = ServerState(kv_store=self, local_g=self.client_g,
+                            partition_book=self.gpb, keep_alive=self.keep_alive)
+            server_state_group.append(server_state)
+
         print('start graph service on server {} for part {}'.format(
             self.server_id, self.part_id))
         start_server(server_id=self.server_id,
                      ip_config=self.ip_config,
                      num_servers=self.num_servers,
                      num_clients=self.num_clients,
-                     server_state=server_state,
+                     server_state_group=server_state_group,
+                     graph_name_group=self.graph_name_group,
+                     partition_grouping_mode=self.partition_grouping_mode,
                      net_type=self.net_type)
 
 class DistGraph:
@@ -468,8 +538,9 @@ class DistGraph:
     set of machines. If users need to run them on different sets of machines, it requires
     manually setting up servers and trainers. The setup is not fully tested yet.
     '''
-    def __init__(self, graph_name, gpb=None, part_config=None):
+    def __init__(self, graph_name, gpb=None, part_config=None, partition_grouping_mode=False):
         self.graph_name = graph_name
+        self.partition_grouping_mode = partition_grouping_mode
         if os.environ.get('DGL_DIST_MODE', 'standalone') == 'standalone':
             assert part_config is not None, \
                     'When running in the standalone model, the partition config file is required'
@@ -486,17 +557,17 @@ class DistGraph:
             for name in node_feats:
                 # The feature name has the following format: node_type + "/" + feature_name.
                 ntype, feat_name = name.split('/')
-                self._client.add_data(str(HeteroDataName(True, ntype, feat_name)),
+                self._client.add_data(str(HeteroDataName(True, ntype, feat_name, partition_grouping_mode=self.partition_grouping_mode, graph_name_in=self.graph_name)),
                                       node_feats[name],
-                                      NodePartitionPolicy(self._gpb, ntype=ntype))
+                                      NodePartitionPolicy(self._gpb, ntype=ntype, partition_grouping_mode=self.partition_grouping_mode, graph_name_in=self.graph_name))
             for name in edge_feats:
                 # The feature name has the following format: edge_type + "/" + feature_name.
                 etype, feat_name = name.split('/')
                 etype = _etype_str_to_tuple(etype)
-                self._client.add_data(str(HeteroDataName(False, etype, feat_name)),
+                self._client.add_data(str(HeteroDataName(False, etype, feat_name, partition_grouping_mode=self.partition_grouping_mode, graph_name_in=self.graph_name)),
                                       edge_feats[name],
-                                      EdgePartitionPolicy(self._gpb, etype=etype))
-            self._client.map_shared_data(self._gpb)
+                                      EdgePartitionPolicy(self._gpb, etype=etype, partition_grouping_mode=self.partition_grouping_mode, graph_name_in=self.graph_name))
+            self._client.map_shared_data(self._gpb, partition_grouping_mode=self.partition_grouping_mode, graph_name=self.graph_name)
             rpc.set_num_client(1)
         else:
             self._init(gpb)
@@ -550,13 +621,15 @@ class DistGraph:
 
         if self._gpb is None:
             self._gpb = gpb
-        self._client.map_shared_data(self._gpb)
+        self._client.map_shared_data(self._gpb, partition_grouping_mode=self.partition_grouping_mode, graph_name=self.graph_name)
 
     def _init_ndata_store(self):
         '''Initialize node data store.'''
         self._ndata_store = {}
         for ntype in self.ntypes:
             names = self._get_ndata_names(ntype)
+            # print("\\" * 100 )
+            # print([(i.get_name(), str(i), i.policy_str) for i in names])
             data = {}
             for name in names:
                 assert name.is_node()
@@ -566,14 +639,23 @@ class DistGraph:
                 dtype, shape, _ = self._client.get_data_meta(str(name))
 
                 # We create a wrapper on the existing tensor in the kvstore.
-                data[name.get_name()] = DistTensor(shape, dtype,
-                    name.get_name(), part_policy=policy, attach=False
-                )
+                if self.partition_grouping_mode:
+                    # hack "~" is POLICY_DELIMITER
+                    data[name.get_name()] = DistTensor(shape, dtype,
+                        self.graph_name + POLICY_DELIMITER + name.get_name(), part_policy=policy, attach=False
+                    )
+                else:
+                    data[name.get_name()] = DistTensor(shape, dtype,
+                        name.get_name(), part_policy=policy, attach=False
+                    )
                 # NOTES(ds4gnn): hack
                 if isinstance(self.get_partition_book(), VCMapPartitionBook):
-                    lookup_name = HeteroDataName(True, ntype, name.get_name(),
+                    lookup_name = HeteroDataName( True, ntype, name.get_name(),
                                           self._client.disable_backup_server,
-                                          self._client.name_on_machine(name.get_name()))
+                                          self._client.name_on_machine(name.get_name()),
+                                          partition_grouping_mode=self.partition_grouping_mode,
+                                          graph_name_in=self.graph_name)
+
                     lookup_name = str(lookup_name)
                     data[name.get_name()] = self._client.data_store[lookup_name]
             if len(self.ntypes) == 1:
@@ -590,13 +672,20 @@ class DistGraph:
             for name in names:
                 assert name.is_edge()
                 policy = PartitionPolicy(name.policy_str,
-                    self.get_partition_book()
+                    self.get_partition_book(),
+                    partition_grouping_mode=self.partition_grouping_mode,
+                    graph_name_in=self.graph_name
                 )
                 dtype, shape, _ = self._client.get_data_meta(str(name))
                 # We create a wrapper on the existing tensor in the kvstore.
-                data[name.get_name()] = DistTensor(shape, dtype,
-                    name.get_name(), part_policy=policy, attach=False
-                )
+                if self.partition_grouping_mode:
+                    data[name.get_name()] = DistTensor(shape, dtype,
+                        self.graph_name + POLICY_DELIMITER + name.get_name(), part_policy=policy, attach=False
+                    )
+                else:
+                    data[name.get_name()] = DistTensor(shape, dtype,
+                        name.get_name(), part_policy=policy, attach=False
+                    )
             if len(self.canonical_etypes) == 1:
                 self._edata_store = data
             else:
@@ -1287,12 +1376,17 @@ class DistGraph:
         ''' Get the names of all node data.
         '''
         names = self._client.gdata_name_list()
+
         ndata_names = []
         for name in names:
-            name = parse_hetero_data_name(name)
+            name = parse_hetero_data_name(name, partition_grouping_mode=self.partition_grouping_mode)
             right_type = (name.get_type() == ntype) if ntype is not None else True
-            if name.is_node() and right_type:
-                ndata_names.append(name)
+
+            enter_flag1 = self.partition_grouping_mode and self.graph_name in str(name)
+            enter_flag2 = not self.partition_grouping_mode
+            if enter_flag1 or enter_flag2:
+                if name.is_node() and right_type:
+                    ndata_names.append(name)
         return ndata_names
 
     def _get_edata_names(self, etype=None):
@@ -1303,10 +1397,14 @@ class DistGraph:
         names = self._client.gdata_name_list()
         edata_names = []
         for name in names:
-            name = parse_hetero_data_name(name)
+            name = parse_hetero_data_name(name, partition_grouping_mode=self.partition_grouping_mode)
             right_type = (name.get_type() == etype) if etype is not None else True
-            if name.is_edge() and right_type:
-                edata_names.append(name)
+
+            enter_flag1 = self.partition_grouping_mode and self.graph_name in str(name)
+            enter_flag2 = not self.partition_grouping_mode
+            if enter_flag1 or enter_flag2:
+                if name.is_edge() and right_type:
+                    edata_names.append(name)
         return edata_names
 
 def _get_overlap(mask_arr, ids):
