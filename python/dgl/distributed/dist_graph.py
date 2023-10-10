@@ -310,7 +310,7 @@ class DistGraphServer(KVServer):
             # group part_conf
             self.partition_grouping_mode = True
         else:
-            assert part_config[-4:] == ".json", f"validating part_conf file type failed {part_config[-4:]} != .json"
+            assert part_config[-5:] == ".json", f"validating part_conf file type failed {part_config[-4:]} != .json"
             self.partition_grouping_mode = False
 
         self.ip_config = ip_config
@@ -352,9 +352,13 @@ class DistGraphServer(KVServer):
             if self.partition_grouping_mode:
                 # in group mode, graph_name is not read from partition book, but specifies from input parameter
                 graph_name = graph_name_in
+            else:
+                graph_name = graph_name_
 
             # NOTE(ds4gnn): assign each partion a unique name, since we have multiple partitions on each machine
             if self.disable_backup_server:
+                #NOTE(ds4gnn): partition_grouping mode and non-grouping mode has different naming
+                # grouping : <dataset>_<part_algo>-<part-id>
                 graph_name = self.name_on_machine(graph_name)
 
             print('load ' + graph_name)
