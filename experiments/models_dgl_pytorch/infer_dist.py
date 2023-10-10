@@ -5,7 +5,7 @@ import torch as th
 import tqdm
 
 
-def inference(model, g, x, batch_size, device, stop_at_border=False):
+def inference_for_default_sampling(model, g, x, batch_size, device):
     """
     Inference with the GraphSAGE model on full neighbors (i.e. without
     neighbor sampling).
@@ -21,7 +21,7 @@ def inference(model, g, x, batch_size, device, stop_at_border=False):
     # layer by layer.  The nodes on each layer are of course splitted in
     # batches.
     # TODO: can we standardize this?
-
+    stop_at_border = False
     force_even_flg = False if stop_at_border else True
     nodes = dgl.distributed.node_split(
         np.arange(g.num_nodes()),
@@ -76,3 +76,58 @@ def inference(model, g, x, batch_size, device, stop_at_border=False):
         g.barrier()
     x = None
     return y
+
+def inference_for_stop_at_the_border(model, g, x, batch_size, device):
+    stop_at_border = True
+    force_even_flg = False if stop_at_border else True
+
+    pb = g.get_partition_book()
+    num_node_this_part = pb.get_part_size_node(pb.partid)
+    nodes = th.arange(start=0, end=num_node_this_part, dtype=th.int64)
+    y = th.zeros((num_node_this_part, model.n_hidden), dtype=th.float32)
+
+    for i, layer in enumerate(model.layers):
+        if i == len(model.layers) - 1:
+            y = th.zeros((num_node_this_part, model.n_classes), dtype=th.float32)
+        print(
+                f"g.rank()={g.rank()}, |V|={num_node_this_part}, eval batch size: {batch_size}"
+        )
+
+        sampler = dgl.dataloading.NeighborSampler(
+            [-1],
+            stop_at_border=stop_at_border
+        )
+
+        dataloader = dgl.dataloading.DistNodeDataLoader(
+            g,
+            nodes,
+            sampler,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+
+        for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
+            block = blocks[0].to(device)
+            h = x[input_nodes].to(device)
+            h_dst = h[: block.number_of_dst_nodes()]
+            h = layer(block, (h, h_dst))
+            if i != len(model.layers) - 1:
+                h = model.activation(h)
+                h = model.dropout(h)
+
+            y[output_nodes] = h.cpu()
+            h = None
+            h_dst = None
+
+        x = y
+        g.barrier()
+    x = None
+    return y
+
+# x feature of g
+def inference(model, g, x, batch_size, device, stop_at_border=False):
+    if stop_at_border == False:
+        return inference_for_default_sampling(model, g, x, batch_size, device)
+    else:
+        return inference_for_stop_at_the_border(model, g, x, batch_size, device)

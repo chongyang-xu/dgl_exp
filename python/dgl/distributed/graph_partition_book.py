@@ -566,10 +566,12 @@ class GraphPartitionBook(ABC):
         Tensor
             Homogeneous edge IDs.
         """
-def get_part_size_node(part_id, type_name):
-    pass
-def get_part_size_edge(part_id, type_name):
-    pass
+    def get_part_size_node(self, part_id, type_name):
+        pass
+    def get_part_size_edge(self, part_id, type_name):
+        pass
+    def get_global_unique_num_nodes(self):
+        pass
 
 class VCMapPartitionBook(GraphPartitionBook):
     def __init__(self, part_id, num_parts, num_nodes, num_edges,part_num_nodes_l, part_num_edges_l, ntypes, etypes, vc_map, save_first_n=-1):
@@ -611,6 +613,9 @@ class VCMapPartitionBook(GraphPartitionBook):
         print("[WARNING] VCMapPartitionBook: #uni_nodes={}, #replia_num={}".format(self._global_unique_num_nodes, self._num_nodes_with_replica ))
         if self._global_unique_num_nodes != main_nodes_sum:
             print("[WARNING] VCMapPartitionBook: #uni_nodes={}, #main_nodes={}".format(self._global_unique_num_nodes, main_nodes_sum ))
+
+    def get_global_unique_num_nodes(self):
+        return self._global_unique_num_nodes
 
     def shared_memory(self, graph_name):
         node_map_pickle = list(pickle.dumps(self._node_map))
