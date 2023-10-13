@@ -118,6 +118,10 @@ def run(args, device, train_controller):
         # as a list of blocks.
         step_time = []
 
+        epoch_step_loss = []
+
+        acc = th.tensor([0.0])
+
         with model.join():
             for step, (input_nodes, seeds, blocks) in enumerate( train_controller.get_dataloader() ):
                 tic_step = time.time()
@@ -155,6 +159,9 @@ def run(args, device, train_controller):
                 step_t = update_end - tic_step
                 step_time.append(step_t)
                 iter_tput.append(len(blocks[-1].dstdata[dgl.NID]) / step_t)
+
+                epoch_step_loss.append(loss.item())
+
                 if step % args.log_every == 0:
                     acc = compute_acc(batch_pred, batch_labels)
                     gpu_mem_alloc = (
@@ -181,6 +188,9 @@ def run(args, device, train_controller):
                 account_time += account_end - update_end
                 start = account_end
         toc = time.time()
+
+        epoch_step_loss = np.mean(epoch_step_loss)
+        train_controller.epoch_end(model, optimizer, acc.item(), epoch_step_loss) # acc is last acc in cur epoch
 
         print("epoch_|t_epoch|{:04d}|epoch|{:04d}|part|{:04d}|epoch_seconds|{:.4f}|sampling|{:.4f}|g_copy|{:.4f}|f_copy|{:.4f}|"
                 "forward|{:.4f}|backward|{:.4f}|update|{:.4f}|account|{:.4f}|n_seed|{:012d}|n_input|{:012d}".format(
@@ -222,7 +232,6 @@ def run(args, device, train_controller):
                         time.time() - start
                     )
                 )
-        train_controller.epoch_end(model, optimizer, acc.item()) # acc is last acc in cur epoch
 
 def main(args):
     print(socket.gethostname(), "Initializing DGL dist")

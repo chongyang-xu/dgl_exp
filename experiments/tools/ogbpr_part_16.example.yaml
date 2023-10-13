@@ -3,6 +3,7 @@ description: "this yaml file specifies a group of partitions of a graph. for eac
 dataset: "ogbpr"
 
 num_parts: 16
+n_classes: 47
 
 partitions:
   - ogbpr_metis: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n16_metis_0/ogbpr.json
@@ -11,4 +12,4 @@ partitions:
   - ogbpr_vcrandom: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n16_vcrandom_0/ogbpr.json
   - ogbpr_vcns: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n16_vcns_0/ogbpr.json
   - ogbpr_vcoblivious: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n16_vcoblivious_0/ogbpr.json
-  - ogbpr_vcst: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n16_vcst_0/ogbpr.json
+#  - ogbpr_vcst: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n16_vcst_0/ogbpr.json
