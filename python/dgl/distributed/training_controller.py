@@ -104,7 +104,8 @@ class TrainController(PartitionSwitcher):
         self.local_train_acc_window = StateWindow(AVERAGE_LOCAL_ACC_WINDOW_LENGTH)
         self.local_train_loss_window = StateWindow(AVERAGE_LOCAL_LOSS_WINDOW_LENGTH)
 
-        self.AVG_DELTA_THRESHOLD = 1e-4 # delta in [5e-3, 1e-4) is viewed as same
+        self.AVG_DELTA_THRESHOLD = 2e-3 #5e-4 # delta in [5e-3, 1e-4) is viewed as same
+        self.STAGE_IDX = 0
         self.AVG_DELTA_THRESHOLD_DEC = 5e-3
         self.AVG_DELTA_THRESHOLD_DEC_SPIKE = 0.1
 
@@ -315,9 +316,9 @@ class TrainController(PartitionSwitcher):
         for i in range(1, AVERAGE_LOCAL_LOSS_WINDOW_LENGTH):
             if abs(loss_s[i] - loss_s[i-1]) >= self.LOSS_DELTA_THRESHOLD:
                 vote_stop = 0
- 
+
         if cur_avg > old_avg:
-            if cur_avg - old_avg < self.AVG_DELTA_THRESHOLD:
+            if cur_avg - old_avg < self.AVG_DELTA_THRESHOLD / (4**self.STAGE_IDX):
                 self.control_state = ControlState.PLATEAU
                 vote_pla = 1
             else:
@@ -334,8 +335,12 @@ class TrainController(PartitionSwitcher):
                 self.control_state = ControlState.DECREASING
                 vote_dec = 1
 
+        volte_better_acc = 0
+        if self.sealed_ckpt[-1]['acc'] < local_train_acc:
+            volte_better_acc = 1
+
         # sync across multiple partitions
-        vote = th.Tensor([vote_pla, vote_inc, vote_dec, vote_dis, vote_stop]) # make sure the order
+        vote = th.Tensor([vote_pla, vote_inc, vote_dec, vote_dis, vote_stop, volte_better_acc]) # make sure the order
         th.distributed.all_reduce(vote, async_op=False)
 
         # check stop vote
@@ -344,6 +349,10 @@ class TrainController(PartitionSwitcher):
                 print("Stop beacuse of loss is no longer decreasing")
             self.stop()
             return
+
+        got_better_acc = False
+        if vote[5].item() > th.distributed.get_world_size()/2:
+            got_better_acc = True
 
         # gather all local control_state to decide current global_control_state
         state_vote=vote[:4]
@@ -362,21 +371,22 @@ class TrainController(PartitionSwitcher):
             if plateau_cnt == self.control_state_window.WINDOW_LENGTH:
                 if th.distributed.get_rank() == 0:
                     print(f"epoch_idx: {self.epoch_idx}, SEAL+SWITCH beacuse of all recnet state are plateau")
-                self.seal(model, opt, local_train_acc, local_train_loss)
+                if got_better_acc:
+                    self.seal(model, opt, local_train_acc, local_train_loss)
+                else:
+                    self.fall_back(model, opt)
                 self.switch()
             elif (increasing_cnt + plateau_cnt ) > (decresing_cnt):
                 self.keep()
             else:
                 if th.distributed.get_rank() == 0:
                     print(f"epoch_idx: {self.epoch_idx}, SEAL+SWITCH beacuse of too much decreasing@1")
-                #
-                # 2. to seal or not-seal+fallback ?
-                #  try NOT. first
-                #
 
-                # 1. plateu threshold
-
-                self.seal(model, opt, local_train_acc, local_train_loss)
+                # 1. plateu threshold and two staged threshold ?
+                if got_better_acc:
+                    self.seal(model, opt, local_train_acc, local_train_loss)
+                else:
+                    self.fall_back(model, opt)
                 self.switch()
 
         if global_state == ControlState.INCREASING:
@@ -387,12 +397,13 @@ class TrainController(PartitionSwitcher):
             if decresing_cnt >= (increasing_cnt + plateau_cnt):
                 if th.distributed.get_rank() == 0:
                     print(f"epoch_idx: {self.epoch_idx}, SEAL+SWITCH beacuse of too much decreasing@2")
-                #
-                # to seal or not-seal+fallback ?
-                #  try NOT. first
-                #
-                self.seal(model, opt, local_train_acc, local_train_loss)
+
+                if got_better_acc:
+                    self.seal(model, opt, local_train_acc, local_train_loss)
+                else:
+                    self.fall_back(model, opt)
                 self.switch()
+
             else:
                 self.keep()
 
@@ -421,10 +432,13 @@ class TrainController(PartitionSwitcher):
     def switch(self):
         # in this policy, switch always re-start from a ckpt
         if len(self.sealed_ckpt[-1]['tried']) == len(self.dataloader_set):
-            if th.distributed.get_rank() == 0:
-                print(f"epoch_idx: {self.epoch_idx}, STOP beacuse no new partition to switch to")
-            self.stop()
-            return
+            self.STAGE_IDX = self.STAGE_IDX + 1
+            self.sealed_ckpt[-1]['tried'] = {}
+            if self.STAGE_IDX > 1:
+                if th.distributed.get_rank() == 0:
+                    print(f"epoch_idx: {self.epoch_idx}, STOP @ STAGE = {self.STAGE_IDX}")
+                self.stop()
+                return
 
         if th.distributed.get_rank() == 0:
             while True:
@@ -449,16 +463,21 @@ class TrainController(PartitionSwitcher):
             print(f"epoch_idx: {self.epoch_idx}, SWTICH to {self.dataloader_idx}, {self.dist_graph_names[self.dataloader_idx]}")
 
     def fall_back(self, model, opt):
+
+        if len(self.sealed_ckpt[-1]['tried']) >= len(self.dataloader_set):
+            #if th.distributed.get_rank() == 0:
+            #    print(f"epoch_idx: {self.epoch_idx}, STOP beacuse of tried every partition")
+            #self.stop()
+            #return
+            if self.STAGE_IDX > 1:
+                if th.distributed.get_rank() == 0:
+                    print(f"epoch_idx: {self.epoch_idx}, STOP @ STAGE = {self.STAGE_IDX}")
+                self.stop()
+                return
+
         # restore to stored ckpt
         old_epoch  =  self.epoch_idx
         self.sealed_ckpt[-1]['tried'].add(self.dataloader_idx)
-
-        if len(self.sealed_ckpt[-1]['tried']) >= len(self.dataloader_set):
-            if th.distributed.get_rank() == 0:
-                print(f"epoch_idx: {self.epoch_idx}, STOP beacuse of tried every partition")
-            self.stop()
-            return
-
         ckpt_dict = self.sealed_ckpt[-1]
 
         self.epoch_idx = ckpt_dict['epoch']
