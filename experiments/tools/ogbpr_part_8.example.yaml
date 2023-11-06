@@ -1,0 +1,14 @@
+description: "this yaml file specifies a group of partitions of a graph. for each partition, the unique name and part_conf is required"
+
+dataset: "ogbpr"
+
+num_parts: 8
+n_classes: 47
+
+partitions:
+  - ogbpr_metis: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n8_metis_0/ogbpr.json
+  - ogbpr_vcdeg: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n8_vcdeg_0/ogbpr.json
+  - ogbpr_random: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n8_random_0/ogbpr.json
+  - ogbpr_vcrandom: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n8_vcrandom_0/ogbpr.json
+  - ogbpr_vcoblivious: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n8_vcoblivious_0/ogbpr.json
+#  - ogbpr_vcst: /workspace/work/ds4gnn/DATA/ds_pre/ogbpr/data_part_n8_vcst_0/ogbpr.json
