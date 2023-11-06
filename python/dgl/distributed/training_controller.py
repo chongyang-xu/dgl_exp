@@ -104,7 +104,7 @@ class TrainController(PartitionSwitcher):
         self.local_train_acc_window = StateWindow(AVERAGE_LOCAL_ACC_WINDOW_LENGTH)
         self.local_train_loss_window = StateWindow(AVERAGE_LOCAL_LOSS_WINDOW_LENGTH)
 
-        self.AVG_DELTA_THRESHOLD = 1e-4 # delta in [5e-3, 1e-4) is viewed as same
+        self.AVG_DELTA_THRESHOLD = 1e-3 # delta in [5e-3, 1e-4) is viewed as same
         self.AVG_DELTA_THRESHOLD_DEC = 5e-3
         self.AVG_DELTA_THRESHOLD_DEC_SPIKE = 0.1
 
@@ -391,7 +391,7 @@ class TrainController(PartitionSwitcher):
                 # to seal or not-seal+fallback ?
                 #  try NOT. first
                 #
-                self.seal(model, opt, local_train_acc, local_train_loss)
+                self.fall_back(model, opt)
                 self.switch()
             else:
                 self.keep()
