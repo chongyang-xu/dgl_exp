@@ -1,0 +1,10 @@
+# eval `ssh-agent -s`
+# ssh-add  /path/to/key/file
+
+export SSH_PREFIX="ssh -o StrictHostKeyChecking=no"
+# ip of manager node for all swarm nodes
+export DS4GNN_MANAGER_IP=
+
+# dataset
+export DS4GNN_DATASET_PATH=
+export DS4GNN_WORKSPACE_PATH=

@@ -223,9 +223,9 @@ def main(args):
     print(dgl_g)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
-    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}{partial}".format(
+    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}_{partial}".format(
             root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo, hop=args.num_hops,
-            partial= f"_first{args.save_first_n_parts}" if args.save_first_n_parts > 0 else '')
+            partial= f"{args.save_first_n_parts}" if args.save_first_n_parts > 0 else f"{args.n_parts}")
     part_config_path = "{out}/{ds}.json".format(out=part_out_path, ds=args.dataset)
     if not os.path.exists(part_out_path):
         os.makedirs(part_out_path)
@@ -268,7 +268,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="dis_pre")
+    parser = argparse.ArgumentParser(description="preprocessing")
     parser.add_argument(
         "--dataset",
         type=str,
