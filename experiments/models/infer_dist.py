@@ -1,6 +1,7 @@
 import numpy as np
 
 import dgl
+from dgl.distributed.graph_partition_book import VCMapPartitionBook
 import torch as th
 import tqdm
 
@@ -82,13 +83,25 @@ def inference_for_stop_at_the_border(model, g, x, batch_size, device):
     force_even_flg = False if stop_at_border else True
 
     pb = g.get_partition_book()
-    num_node_this_part = pb.get_part_size_node(pb.partid)
-    nodes = th.arange(start=0, end=num_node_this_part, dtype=th.int64)
-    y = th.zeros((num_node_this_part, model.n_hidden), dtype=th.float32)
+    is_vcmap_pb = isinstance(pb, VCMapPartitionBook)
+
+    num_node_this_part = pb.get_part_size_node(pb.partid, type_name='_N')
+    if is_vcmap_pb:
+        nodes = th.arange(start=0, end=num_node_this_part, dtype=th.int64)
+        y = th.zeros((num_node_this_part, model.n_hidden), dtype=th.float32)
+    else: # RangePartitionBook
+        offset = 0
+        for i in range(pb.partid):
+            offset = offset + pb.get_part_size_node(i, type_name='_N')
+        nodes = th.arange(start=offset, end=offset+num_node_this_part, dtype=th.int64)
+        y = th.zeros((pb._num_nodes(), model.n_hidden), dtype=th.float32)
 
     for i, layer in enumerate(model.layers):
         if i == len(model.layers) - 1:
-            y = th.zeros((num_node_this_part, model.n_classes), dtype=th.float32)
+            if is_vcmap_pb:
+                y = th.zeros((num_node_this_part, model.n_classes), dtype=th.float32)
+            else: # RangePartitionBook
+                y = th.zeros((pb._num_nodes(), model.n_classes), dtype=th.float32)
         print(
                 f"g.rank()={g.rank()}, |V|={num_node_this_part}, eval batch size: {batch_size}"
         )
