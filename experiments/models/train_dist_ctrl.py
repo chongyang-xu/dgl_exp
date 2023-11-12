@@ -73,14 +73,17 @@ def run(args, device, train_controller):
     if args.model == 'sage':
         model = GraphSAGE(in_feats, args.num_hidden, n_classes,
                           args.num_layers, F.relu, args.dropout,)
+        model.name = 'sage'
     elif args.model == 'gat':
         n_heads = 4
         model = GAT(in_feats, args.num_hidden, n_classes, n_heads,
                           args.num_layers, F.relu, args.dropout,)
+        model.name = 'gat'
     else:
         assert args.model == 'gcn'
         model = GCN(in_feats, args.num_hidden, n_classes,
                     args.num_layers, F.relu, args.dropout,)
+        model.name = 'gcn'
 
     model = model.to(device)
     if not args.standalone:
