@@ -213,14 +213,14 @@ def main(args):
     if args.part_algo[:2] == 'vc':
         dgl_g = None
         balance_ntypes = None
-        vc_json_file = prepare_dataset_for_vc(args, ori_ds_path)
-        with open(vc_json_file, "r") as f:
-            vc_json = json.load(f)
     else:
         dgl_g = load_dataset_into_memory(args, ori_ds_path)
         balance_ntypes = dgl_g.ndata['train_mask']
-        vc_json = None
     print(dgl_g)
+
+    vc_json_file = prepare_dataset_for_vc(args, ori_ds_path)
+    with open(vc_json_file, "r") as f:
+        vc_json = json.load(f)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
     part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}_{partial}".format(

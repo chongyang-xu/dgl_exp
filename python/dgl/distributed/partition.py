@@ -128,7 +128,7 @@ def _get_part_ranges(id_ranges):
     return res
 
 def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method, num_parts, vc_map,
-                               parts, halo_hops, vc_json, save_first_n_parts=-1):
+        parts, halo_hops, vc_json, save_first_n_parts=-1, materialize_node_feat=False):
 
     assert halo_hops <=1 , "halo hop not implemented"
     assert num_parts > 0, "only handle >0 part(s)"
@@ -153,7 +153,7 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
                      'ntypes': ntypes,
                      'etypes': etypes,
                      'vc_map' : VC_MAP_F_NAME,
-                     'save_first_n_parts' : save_first_n_parts
+                     'save_first_n_parts' : save_first_n_parts,
                     }
 
     start = time.time()
@@ -167,7 +167,15 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
     # should optimize for big embedding
     full_node_feat_path=vc_json['node_feats_file_bin']
     feat_shape=(vc_json['num_nodes'], vc_json['feat_dim'])
-    full_node_feat=vc_load_full_node_feat_from_disk(full_node_feat_path, feat_shape)
+
+    part_metadata['node_feat_bin_f'] = full_node_feat_path
+    part_metadata['node_feat_n'] = vc_json['num_nodes']
+    part_metadata['node_feat_dim'] = vc_json['feat_dim']
+
+    if materialize_node_feat == True:
+        full_node_feat=vc_load_full_node_feat_from_disk(full_node_feat_path, feat_shape)
+    else:
+        full_node_feat=None
 
     split_file_path=vc_json['split_file_path']
     train_mask, val_mask, test_mask = vc_load_full_node_split_mask_from_disk(split_file_path, vc_json['num_nodes'])
@@ -209,6 +217,8 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
         part = parts[part_id]
         node_feats = {}
         edge_feats = {}
+        local_nid = {}
+
         # when halo hops == 0, all nodes are inner nodes
         local_mask = local_to_part_mask(vc_map, part_id)
 
@@ -226,7 +236,10 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
         #))
 
         local_nodes = part.ndata[NID]
-        node_feats['_N' + '/' + 'feat'] = F.gather_row(full_node_feat, local_nodes)
+        if materialize_node_feat == True:
+            node_feats['_N' + '/' + 'feat'] = F.gather_row(full_node_feat, local_nodes)
+        else:
+            local_nid['oid'] = local_nodes
         node_feats['_N' + '/' + 'train_mask'] = F.gather_row(train_mask_part, local_nodes)
         node_feats['_N' + '/' + 'val_mask'] = F.gather_row(val_mask_part, local_nodes)
         node_feats['_N' + '/' + 'test_mask'] = F.gather_row(test_mask_part, local_nodes)
@@ -237,17 +250,20 @@ def _save_vc_partitioned_graph(out_path, graph_name, graph_formats, part_method,
 
         part_dir = os.path.join(out_path, "part" + str(part_id))
         node_feat_file = os.path.join(part_dir, "node_feat.dgl")
+        local_nid_file = os.path.join(part_dir, "local_nid.dgl")
         edge_feat_file = os.path.join(part_dir, "edge_feat.dgl")
         part_graph_file = os.path.join(part_dir, "graph.dgl")
 
         part_metadata['part-{}'.format(part_id)] = {
             'node_feats': os.path.relpath(node_feat_file, out_path),
+            'local_nid': os.path.relpath(local_nid_file, out_path),
             'edge_feats': os.path.relpath(edge_feat_file, out_path),
             'part_graph': os.path.relpath(part_graph_file, out_path),
             }
 
         os.makedirs(part_dir, mode=0o775, exist_ok=True)
         save_tensors(node_feat_file, node_feats)
+        save_tensors(local_nid_file, local_nid)
         save_tensors(edge_feat_file, edge_feats)
 
         sort_etypes = len(etypes) > 1
@@ -392,6 +408,22 @@ def load_partition_feats(part_config, part_id, load_nodes=True, load_edges=True)
     node_feats = None
     if load_nodes:
         node_feats = load_tensors(relative_to_config(part_files['node_feats']))
+        # load feature
+        if 'local_nid' in part_files:
+            local_nid = load_tensors(relative_to_config(part_files['local_nid']))
+            if 'oid' in local_nid:
+                print(f"gathering node features... {part_id}\n")
+                node_feat_bin_f = part_metadata['node_feat_bin_f']
+                node_n = part_metadata['node_feat_n']
+                feat_dim = part_metadata['node_feat_dim']
+                node_feat_npy = np.memmap(node_feat_bin_f, dtype='float32', mode='r', shape=(node_n, feat_dim))
+                local_nid = local_nid['oid'].detach().cpu().numpy()
+                sorted_idx = np.argsort(local_nid)
+                sorted_feat = node_feat_npy[local_nid[sorted_idx]]
+                restored_feat = sorted_feat[np.argsort(sorted_idx)]
+                node_feats['_N' + '/' + 'feat'] = F.zerocopy_from_numpy(restored_feat)
+                print(f"gathering node features... {part_id}. Done.\n")
+
         #print("===========DBG in {}".format(load_partition_feats.__qualname__))
         #print("===========node_feats:")
         #for k,v in node_feats.items():
@@ -585,7 +617,8 @@ def _set_trainer_ids(g, sim_g, node_parts):
 def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method="metis",
                     balance_ntypes=None, balance_edges=False, return_mapping=False,
                     num_trainers_per_machine=1, objtype='cut', graph_formats=None, vc_json=None,
-                    save_first_n_parts=-1):
+                    save_first_n_parts=-1, materialize_node_feat=False, node_feat_bin_f=None,
+                    node_feat_dim=-1):
     ''' Partition a graph for distributed training and store the partitions on files.
 
     The partitioning occurs in three steps: 1) run a partition algorithm (e.g., Metis) to
@@ -1056,12 +1089,18 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                      'ntypes': ntypes,
                      'etypes': etypes,
                      'save_first_n_parts': save_first_n_parts} # metis and random use this as flag
+
+    part_metadata['node_feat_bin_f'] = vc_json['node_feats_file_bin']
+    part_metadata['node_feat_n'] = vc_json['num_nodes']
+    part_metadata['node_feat_dim'] = vc_json['feat_dim']
+
     for part_id in range(num_parts):
         part = parts[part_id]
 
         # Get the node/edge features of each partition.
         node_feats = {}
         edge_feats = {}
+        local_nid = {}
         if num_parts > 1:
             for ntype in g.ntypes:
                 ntype_id = g.get_ntype_id(ntype)
@@ -1086,8 +1125,16 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                     #print("name: {} in g.nodes[ntype].data".format(name))
                     if name in [NID, 'inner_node']:
                         continue
-                    node_feats[ntype + '/' + name] = F.gather_row(g.nodes[ntype].data[name],
-                                                                  local_nodes)
+
+                    if name == 'feat':
+                        if materialize_node_feat == True:
+                            node_feats[ntype + '/' + name] = F.gather_row(g.nodes[ntype].data[name],
+                                                                      local_nodes)
+                        else:
+                            local_nid['oid'] = local_nodes
+                    else:
+                        node_feats[ntype + '/' + name] = F.gather_row(g.nodes[ntype].data[name],
+                                                                      local_nodes)
 
             for etype in g.canonical_etypes:
                 etype_id = g.get_etype_id(etype)
@@ -1124,8 +1171,12 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
                 for name in g.nodes[ntype].data:
                     if name in [NID, 'inner_node']:
                         continue
-                    node_feats[ntype + '/' + name] = F.gather_row(g.nodes[ntype].data[name],
-                                                                    local_nodes)
+                    if materialize_node_feat == True:
+                        node_feats[ntype + '/' + name] = F.gather_row(g.nodes[ntype].data[name],
+                                                                      local_nodes)
+                    else:
+                        local_nid['oid'] = local_nodes
+
             for etype in g.canonical_etypes:
                 if not g.is_homogeneous:
                     edata_name = 'orig_id'
@@ -1147,12 +1198,15 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
 
         part_dir = os.path.join(out_path, "part" + str(part_id))
         node_feat_file = os.path.join(part_dir, "node_feat.dgl")
+        local_nid_file = os.path.join(part_dir, "local_nid.dgl")
         edge_feat_file = os.path.join(part_dir, "edge_feat.dgl")
         part_graph_file = os.path.join(part_dir, "graph.dgl")
         part_metadata['part-{}'.format(part_id)] = {
             'node_feats': os.path.relpath(node_feat_file, out_path),
             'edge_feats': os.path.relpath(edge_feat_file, out_path),
-            'part_graph': os.path.relpath(part_graph_file, out_path)}
+            'part_graph': os.path.relpath(part_graph_file, out_path),
+            'local_nid': os.path.relpath(local_nid_file, out_path)
+        }
 
         if save_first_n_parts > 0 and part_id >= save_first_n_parts:
             continue # when  save_first_n_parts is valid, skip file of part_id >= n_parts 
@@ -1160,6 +1214,7 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
             os.makedirs(part_dir, mode=0o775, exist_ok=True)
             save_tensors(node_feat_file, node_feats)
             save_tensors(edge_feat_file, edge_feats)
+            save_tensors(local_nid_file, local_nid)
 
             sort_etypes = len(g.etypes) > 1
             _save_graphs(part_graph_file, [part], formats=graph_formats,

@@ -1,10 +1,10 @@
-# eval `ssh-agent -s`
-# ssh-add  /path/to/key/file
+eval `ssh-agent -s`
+ssh-add  /DS/dsg-graphs/work/ds4gnn/wtool/id_rsa_root
 
 export SSH_PREFIX="ssh -o StrictHostKeyChecking=no"
 # ip of manager node for all swarm nodes
-export DS4GNN_MANAGER_IP=
+export DS4GNN_MANAGER_IP="139.19.179.4"
 
 # dataset
-export DS4GNN_DATASET_PATH=
-export DS4GNN_WORKSPACE_PATH=
+export DS4GNN_DATASET_PATH="/DS/dsg-graphs/nobackup/ds4gnn/DATA/"
+export DS4GNN_WORKSPACE_PATH="/DS/dsg-graphs/work/ds4gnn/WS/"

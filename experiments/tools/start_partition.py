@@ -12,6 +12,8 @@ def combine_yaml_head(dataset, num_part):
 
     if dataset == "ogbpr":
         n_class = 47
+    elif dataset == "ogbpa":
+        n_class = 172
     else:
         assert False
     combine_yaml += f"n_classes: {n_class}"

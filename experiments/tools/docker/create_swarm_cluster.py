@@ -13,6 +13,8 @@ DS4GNN_MANAGER_IP = os.environ['DS4GNN_MANAGER_IP']
 DATASET_PATH = os.environ['DS4GNN_DATASET_PATH']
 WORKSPACE_PATH = os.environ['DS4GNN_WORKSPACE_PATH']
 
+CLUSTER_NET_NAME='ds4gnn_net'
+
 opt = subprocess.check_output("whoami", shell=True)
 opt = opt.strip().decode()
 assert opt == "root", f"opt={opt}: docker swarm need root privilege to create cluster across physical nodes"
@@ -56,7 +58,7 @@ with open(args.phy_hosts) as hosts:
             skip_exp(f"{SSH_PREFIX} {h} docker stop {WORKER}")
             skip_exp(f"{SSH_PREFIX} {h} docker rm {WORKER}")
             dgl_worker_idx = dgl_worker_idx + 1
-        skip_exp(f"{SSH_PREFIX} {h} docker swarm leave --force && docker network rm ds4gnn_net")
+        skip_exp(f"{SSH_PREFIX} {h} docker swarm leave --force && docker network rm {CLUSTER_NET_NAME}")
 
 printg("Creating swarm network")
 with open(args.phy_hosts) as hosts:
@@ -68,7 +70,7 @@ with open(args.phy_hosts) as hosts:
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker swarm join-token worker", shell=True)
             res = opt.decode().strip().split("\n")
             worker_join = res[2].strip()
-            opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker network create -d overlay --attachable ds4gnn_net", shell=True)
+            opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker network create -d overlay --attachable {CLUSTER_NET_NAME}", shell=True)
             #print(opt.decode())
         else:
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} {worker_join}", shell=True)
@@ -88,12 +90,12 @@ with open(args.phy_hosts) as hosts:
         #opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker load --input /tmp/ds4gnn_run.tar", shell=True)
         #print(opt.decode())
         #opt = subprocess.check_output(f"{SSH_PREFIX} {h} rm /tmp/ds4gnn_run.tar", shell=True)
-####        opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker load --input {WORKSPACE_PATH}/ds4gnn_run.tar", shell=True)
+        opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker load --input {WORKSPACE_PATH}/ds4gnn_run.tar", shell=True)
         print(opt.decode())
         
         for li in range(n_gpu):
             WORKER  = f"ds4gnn_w{dgl_worker_idx}"
-            RUN_CMD = f"docker run -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --gpus device={li} --shm-size=256g --name {WORKER} --network ds4gnn_net -dit ds4gnn_run:latest"
+            RUN_CMD = f"docker run -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --gpus device={li} --shm-size=256g --name {WORKER} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} {RUN_CMD}", shell=True)
             #print(opt.decode())
             # start ssh
@@ -106,7 +108,7 @@ print(f"Listing created containers...")
 with open(args.phy_hosts) as hosts:
     for n, line in enumerate(hosts.readlines()):
         h = line.split(" ")[0]
-        opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker network inspect ds4gnn_net", shell=True)
+        opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker network inspect {CLUSTER_NET_NAME}", shell=True)
         config = json.loads(opt.decode())
         config = config[0]['Containers']
         with open("hosts.docker", "a") as hf:
@@ -117,11 +119,11 @@ with open(args.phy_hosts) as hosts:
                 if name[:8] == 'ds4gnn_w':
                     hf.write(ipv4.split('/')[0] +"\n" )
 
-os.system(f"mv hosts.docker {DATASET_PATH}/hosts")
+os.system(f"mv hosts.docker {DATASET_PATH}/ipconfigs/docker{dgl_worker_idx}.txt")
 
-printg("Starting submit container...")
+printg("Starting submit-node container...")
 SUBMIT_NODE="ds4gnn_submit"
-RUN_CMD = f"docker run -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --shm-size=256g --name {SUBMIT_NODE} --network ds4gnn_net -dit ds4gnn_run:latest"
+RUN_CMD = f"docker run -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --shm-size=256g --name {SUBMIT_NODE} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
 os.system(RUN_CMD)
 
 printg("Downloading ds4gnn")
@@ -133,7 +135,7 @@ printg("Compiling ds4gnn")
 #### os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD}\"")
 
 printg("Installing ds4gnn...")
-"""
+
 CMD_INS="cd /workspace/dgl_dsg/python && python3 setup.py install"
 os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD_INS}\"")
 #with open(f"{DATASET_PATH}/hosts") as ff:
@@ -141,6 +143,6 @@ os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD_INS}\"")
 for i in range(dgl_worker_idx):
     WORKER=f"ds4gnn_w{i}"
     os.system(f"docker exec {SUBMIT_NODE} {SSH_PREFIX} {WORKER} \"{CMD_INS}\"")
-"""
+
 tot_t = time.time() - start
 printg(f"Total time: {tot_t} seconds")
