@@ -19,6 +19,7 @@ parser.add_argument('--use_first_n_parts', type=int, required=True, default=-1, 
 parser.add_argument('--model', type=str, required=True, choices=['sage', 'gcn', 'gat'], help='')
 parser.add_argument('--layers', type=int, required=True, choices=[5, 4, 3, 2], help='')
 parser.add_argument('--batch_size', type=int, required=True, help='')
+parser.add_argument('--batch_size_eval', type=int, required=True, default=100000, help='')
 parser.add_argument('--sampling', type=str, required=True, choices=['dft', 'bdr'], help='')
 
 parser.add_argument('--n_epoch', type=int, required=True, help='number of epochs for training')
@@ -98,6 +99,7 @@ SINGLE_JOB_CMD += "{BORDER}{BACKUP_SERVER}".format(
                 )
 
 SINGLE_JOB_CMD += f" --eval_every {args.eval_every}"
+SINGLE_JOB_CMD += f" --batch_size_eval {args.batch_size_eval}"
 
 #if args.resume_path is not None:
 #    SINGLE_JOB_CMD += f" --resume_path {args.resume_path}"
