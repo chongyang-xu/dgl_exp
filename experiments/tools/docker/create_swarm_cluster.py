@@ -77,7 +77,7 @@ with open(args.phy_hosts) as hosts:
 
 printg("Creating docker containers")
 ####os.system("docker build -f ./Dockerfile -t ds4gnn_run:latest .")
-####os.system(f"docker save --output {WORKSPACE_PATH}/ds4gnn_run.tar ds4gnn_run:latest")
+####os.system(f"docker save --output {DATASET_PATH}/ds4gnn_run.tar ds4gnn_run:latest")
 # os.system("docker save --output ds4gnn_run.tar ds4gnn_run:latest")
 dgl_worker_idx = 0
 with open(args.phy_hosts) as hosts:
@@ -90,12 +90,12 @@ with open(args.phy_hosts) as hosts:
         #opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker load --input /tmp/ds4gnn_run.tar", shell=True)
         #print(opt.decode())
         #opt = subprocess.check_output(f"{SSH_PREFIX} {h} rm /tmp/ds4gnn_run.tar", shell=True)
-        opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker load --input {WORKSPACE_PATH}/ds4gnn_run.tar", shell=True)
+        opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker load --input {DATASET_PATH}/ds4gnn_run.tar", shell=True)
         print(opt.decode())
         
         for li in range(n_gpu):
             WORKER  = f"ds4gnn_w{dgl_worker_idx}"
-            RUN_CMD = f"docker run -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --gpus device={li} --shm-size=256g --name {WORKER} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
+            RUN_CMD = f"docker run --cap-add SYS_NICE -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --gpus device={li} --shm-size=256g --name {WORKER} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} {RUN_CMD}", shell=True)
             #print(opt.decode())
             # start ssh
@@ -123,7 +123,7 @@ os.system(f"mv hosts.docker {DATASET_PATH}/ipconfigs/docker{dgl_worker_idx}.txt"
 
 printg("Starting submit-node container...")
 SUBMIT_NODE="ds4gnn_submit"
-RUN_CMD = f"docker run -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --shm-size=256g --name {SUBMIT_NODE} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
+RUN_CMD = f"docker run --cap-add SYS_NICE -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --shm-size=256g --name {SUBMIT_NODE} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
 os.system(RUN_CMD)
 
 printg("Downloading ds4gnn")
@@ -136,13 +136,13 @@ printg("Compiling ds4gnn")
 
 printg("Installing ds4gnn...")
 
-CMD_INS="cd /workspace/dgl_dsg/python && python3 setup.py install"
-os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD_INS}\"")
+#CMD_INS="cd /workspace/dgl_dsg/python && python3 setup.py install"
+#os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD_INS}\"")
 #with open(f"{DATASET_PATH}/hosts") as ff:
 #    for i,ip in enumerate(ff.readlines()):
-for i in range(dgl_worker_idx):
-    WORKER=f"ds4gnn_w{i}"
-    os.system(f"docker exec {SUBMIT_NODE} {SSH_PREFIX} {WORKER} \"{CMD_INS}\"")
+#for i in range(dgl_worker_idx):
+#    WORKER=f"ds4gnn_w{i}"
+#    os.system(f"docker exec {SUBMIT_NODE} {SSH_PREFIX} {WORKER} \"{CMD_INS}\"")
 
 tot_t = time.time() - start
 printg(f"Total time: {tot_t} seconds")
