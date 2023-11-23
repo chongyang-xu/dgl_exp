@@ -4,6 +4,7 @@ import time
 TOTAL_MACHINE=4 # totoal number of docker containers == total GPUs
 N_EPOCH=500
 N_EVAL=500 # evaluate every ...
+EVAL_BATCH_SIZE=1000 # ogbpax16 use 1e3, ogbpr used 1e5
 
 def run_training_ctrl(dataset_list, num_part_list, use_first_n_parts, part_algo_list, num_layer_list, model_list, extra_tag="no"):
     part_algo_list = None
@@ -22,7 +23,7 @@ def run_training_ctrl(dataset_list, num_part_list, use_first_n_parts, part_algo_
 f" --graph_data_config /data/ds_pre/{DATA_SET}/part_n{NUM_PART}_combine_0_{first_n}.yaml" \
 f" --use_first_n_parts {use_first_n_parts} --n_parts {NUM_PART}" \
 f" --model {MODEL} --layers {NUM_LAYER} --one_id trainctrl_{DATA_SET}_{NUM_PART}_{first_n}_{extra_tag}_{MODEL}_{NUM_LAYER}_bdr" \
-f" --batch_size 1000 --batc_size_eval {EVAL_BATCH_SIZE} --eval_every {N_EVAL} --n_epoch {N_EPOCH}" \
+f" --batch_size 1000 --batch_size_eval {EVAL_BATCH_SIZE} --eval_every {N_EVAL} --n_epoch {N_EPOCH}" \
 f" --n_mach {n_mach} --n_gpu_per_mach 1 --n_server_per_mach {n_svr_per_mach} --n_trainer_per_mach {n_trainer_per_mach} --n_sampler_per_trainer 0" \
 f" --disable_backup_server True --ip_config {ip_config}" \
 f" --sampling bdr" \
