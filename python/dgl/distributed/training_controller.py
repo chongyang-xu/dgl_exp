@@ -300,8 +300,10 @@ class TrainController(PartitionSwitcher):
         # provide an initial sealed state
         if self.epoch_idx == 0:
             self.seal(model, opt, 0.0, 0.0)
-
-        return self.epoch_idx < self.train_epoch_n and not self.stopped
+        move_to_next = self.epoch_idx < self.train_epoch_n and not self.stopped
+        if not move_to_next:
+            self.seal(model, opt, self.local_train_acc_window.get_list()[-1], self.local_train_loss_window.get_list()[-1])
+        return move_to_next
 
     def epoch_end(self, model, opt, local_train_acc, local_train_loss):
         self.local_train_acc_window.push(local_train_acc)
@@ -447,6 +449,16 @@ class TrainController(PartitionSwitcher):
 
         if th.distributed.get_rank() == 0:
             print(f"epoch_idx: {self.epoch_idx}, SWTICH to {self.dataloader_idx}, {self.dist_graph_names[self.dataloader_idx]}")
+ 
+    def load_best_model(self, copy):
+        best_acc = 0
+        best_idx = -1
+        for idx, ckpt in enumerate(self.sealed_ckpt):
+            if ckpt['acc'] > best_acc:
+                best_acc = ckpt['acc']
+                best_idx = idx
+        copy.load_state_dict(self.sealed_ckpt[idx]['model_state_dict'])
+        return copy
 
     def fall_back(self, model, opt):
         # restore to stored ckpt

@@ -216,8 +216,11 @@ def run(args, device, train_controller):
         if (train_controller.get_epoch() + 1) % args.eval_every == 0 and train_controller.get_epoch() != 0:
             start = time.time()
             g = train_controller.get_g()
+            print("use best model so far for inference....")
+            model_infer = model
+            train_controller.load_best_model(model_infer)
             val_acc, test_acc = evaluate(
-                model if args.standalone else model.module,
+                model_infer if args.standalone else model_infer.module,
                 g,
                 g.ndata["feat"],
                 g.ndata["label"],
