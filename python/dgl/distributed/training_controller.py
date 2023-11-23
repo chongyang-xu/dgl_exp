@@ -74,7 +74,11 @@ class PartitionSwitcher(ABC):
 # dgl.distributed.initialize()
 # th.distributed.init_process_group(backend=args.backend)
 class TrainController(PartitionSwitcher):
-    def __init__(self, local_rank, train_epoch_n):
+    def __init__(self, local_rank, train_epoch_n, mode=0):
+        # mode 0: the automated switcher
+        # mode 1: switch at every epoch
+        self.mode = mode
+
         self.dist_graph_set   = [] # the list of all disgraph
         self.dist_graph_pbs   = [] # the coresponding partition books of dist graph
         self.dist_graph_names = [] # the list of names of all disgraph, partition method is expected here
@@ -306,6 +310,12 @@ class TrainController(PartitionSwitcher):
         return move_to_next
 
     def epoch_end(self, model, opt, local_train_acc, local_train_loss):
+        if mode == 1:
+            self.switch_wo_seal()
+            return
+        else:
+            assert mode == 0
+
         self.local_train_acc_window.push(local_train_acc)
         self.local_train_loss_window.push(local_train_loss)
         acc_s = self.local_train_acc_window.get_list()
@@ -418,6 +428,10 @@ class TrainController(PartitionSwitcher):
         # broadcast need at least 8 bytes
         th.distributed.broadcast(idx_tensor, 0)
         self.dataloader_idx = idx_tensor.numpy()[0]
+        self.dataloader = self.dataloader_set[self.dataloader_idx]
+
+    def switch_wo_seal(self):
+        self.dataloader_idx = ( self.dataloader_idx + 1 ) % len(self.dataloader_set)
         self.dataloader = self.dataloader_set[self.dataloader_idx]
 
     def switch(self):
