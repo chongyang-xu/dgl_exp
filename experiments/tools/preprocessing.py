@@ -223,8 +223,8 @@ def main(args):
         vc_json = json.load(f)
 
     pre_ds_root = "{0}/ds_pre".format(data_root_path)
-    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}_{hop}_{partial}".format(
-            root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo, hop=args.num_hops,
+    part_out_path = "{root}/{ds}/data_part_n{num}_{algo}{algo_tag}_{hop}_{partial}".format(
+            root=pre_ds_root, ds=args.dataset, num=args.n_parts, algo=args.part_algo, algo_tag=args.algo_tag, hop=args.num_hops,
             partial= f"{args.save_first_n_parts}" if args.save_first_n_parts > 0 else f"{args.n_parts}")
     part_config_path = "{out}/{ds}.json".format(out=part_out_path, ds=args.dataset)
     if not os.path.exists(part_out_path):
@@ -288,6 +288,12 @@ if __name__ == "__main__":
         type=str,
         default="random",
         help="Dataset name ('random', 'metis', 'vcrandom', 'vcoblivious', 'vchdrf').",
+    )
+    parser.add_argument(
+        "--algo-tag",
+        type=str,
+        default="",
+        help="Tag name to identify partitions of same scheme, e.g. 01, 02, 03,..20",
     )
     parser.add_argument(
         "--n-parts", type=int, required=True, help="number of graph partitions"
