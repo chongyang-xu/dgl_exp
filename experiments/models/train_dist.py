@@ -33,7 +33,10 @@ def compute_acc(pred, labels):
     Compute the accuracy of prediction given the labels.
     """
     labels = labels.long()
-    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+    n_correct = (th.argmax(pred, dim=1) == labels).float().sum()
+    n_correct_total = th.Tensor([n_correct, float(len(pred))])
+    th.distributed.all_reduce(n_correct_total, async_op=False)
+    return n_correct_total
 
 
 def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, stop_at_border):
@@ -171,22 +174,23 @@ def run(args, device, data):
                 step_time.append(step_t)
                 iter_tput.append(len(blocks[-1].dstdata[dgl.NID]) / step_t)
                 if step % args.log_every == 0:
-                    acc = compute_acc(batch_pred, batch_labels)
+                    acc_t = compute_acc(batch_pred, batch_labels)
                     gpu_mem_alloc = (
                         th.cuda.max_memory_allocated() / 1000000
                         if th.cuda.is_available()
                         else 0
                     )
                     print("step_|epoch|{:04d}|step|{:04d}|part|{:04d}|loss|{:.4f}|"
-                          "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}".format(
+                            "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}|train:{:.1f},{:.1f}".format(
                                 epoch,
                                 step,
                                 g.rank(),
                                 loss.item(),
-                                acc.item(),
+                                acc_t[0].item()/acc_t[1].item(),
                                 np.mean(iter_tput[3:]),
                                 gpu_mem_alloc,
-                                np.sum(step_time[-args.log_every:])
+                                np.sum(step_time[-args.log_every:]),
+                                acc_t[0].item(), acc_t[1].item()
                                )
                          )
                 account_end = time.time()
@@ -212,7 +216,7 @@ def run(args, device, data):
 
         if (epoch + 1) % args.eval_every == 0 and epoch != 0:
             start = time.time()
-            val_acc, test_acc = evaluate(
+            val_acc_t, test_acc_t = evaluate(
                 model if args.standalone else model.module,
                 g,
                 g.ndata["feat"],
@@ -223,12 +227,14 @@ def run(args, device, data):
                 device,
                 args.stop_at_border,
             )
-            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}".format(
+            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
                         epoch,
                         g.rank(),
-                        val_acc,
-                        test_acc,
-                        time.time() - start
+                        val_acc_t[0].item()  / val_acc_t[1].item(),
+                        test_acc_t[0].item() / test_acc_t[1].item(),
+                        time.time() - start,
+                        val_acc_t[0], val_acc_t[1],
+                        test_acc_t[0], test_acc_t[1],
                     )
                 )
         if args.checkpoint_path is not None and args.checkpoint_every > 0:

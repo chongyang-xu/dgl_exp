@@ -34,7 +34,10 @@ def compute_acc(pred, labels):
     Compute the accuracy of prediction given the labels.
     """
     labels = labels.long()
-    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+    n_correct = (th.argmax(pred, dim=1) == labels).float().sum()
+    n_correct_total = th.Tensor([n_correct, float(len(pred))])
+    th.distributed.all_reduce(n_correct_total, async_op=False)
+    return n_correct_total
 
 
 def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, stop_at_border):
@@ -166,7 +169,7 @@ def run(args, device, train_controller):
                 epoch_step_loss.append(loss.item())
 
                 if step % args.log_every == 0:
-                    acc = compute_acc(batch_pred, batch_labels)
+                    acc_t = compute_acc(batch_pred, batch_labels)
                     gpu_mem_alloc = (
                         th.cuda.max_memory_allocated() / 1000000
                         if th.cuda.is_available()
@@ -174,16 +177,17 @@ def run(args, device, train_controller):
                     )
 
                     print("step_|t_epoch|{:04d}|epoch|{:04d}|step|{:04d}|part|{:04d}|loss|{:.4f}|"
-                          "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}".format(
+                            "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}|train:{:.1f},{:.1f}".format(
                                 t_epoch,
                                 train_controller.get_epoch(),
                                 step,
                                 train_controller.get_rank(),
                                 loss.item(),
-                                acc.item(),
+                                acc_t[0].item()/acc_t[1].item(),
                                 np.mean(iter_tput[3:]),
                                 gpu_mem_alloc,
-                                np.sum(step_time[-args.log_every:])
+                                np.sum(step_time[-args.log_every:]),
+                                acc_t[0].item(), acc_t[1].item()
                                )
                          )
 
@@ -215,27 +219,29 @@ def run(args, device, train_controller):
 
         if (train_controller.get_epoch() + 1) % args.eval_every == 0 and train_controller.get_epoch() != 0:
             start = time.time()
-            g = train_controller.get_g()
+            g = train_controller.get_infer_g()
             print("use best model so far for inference....")
             model_infer = model
             train_controller.load_best_model(model_infer)
-            val_acc, test_acc = evaluate(
+            val_acc_t, test_acc_t = evaluate(
                 model_infer if args.standalone else model_infer.module,
                 g,
                 g.ndata["feat"],
                 g.ndata["label"],
-                train_controller.get_val_nid(),
-                train_controller.get_test_nid(),
+                train_controller.get_infer_val_nid(),
+                train_controller.get_infer_test_nid(),
                 args.batch_size_eval,
                 device,
                 args.stop_at_border,
             )
-            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}".format(
+            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
                         train_controller.get_epoch(),
                         train_controller.get_rank(),
-                        val_acc,
-                        test_acc,
-                        time.time() - start
+                        val_acc_t[0].item()  / val_acc_t[1].item(),
+                        test_acc_t[0].item() / test_acc_t[1].item(),
+                        time.time() - start,
+                        val_acc_t[0], val_acc_t[1],
+                        test_acc_t[0], test_acc_t[1],
                     )
                 )
 
