@@ -77,6 +77,7 @@ class TrainController(PartitionSwitcher):
     def __init__(self, local_rank, train_epoch_n, mode=0):
         # mode 0: the automated switcher
         # mode 1: switch at every epoch
+        # mode 2: switch at every 5 epoch
         self.mode = mode
 
         self.dist_graph_set   = [] # the list of all disgraph
@@ -124,6 +125,48 @@ class TrainController(PartitionSwitcher):
         self.sealed_ckpt = []
 
         self.stopped = False
+ 
+        self.infer_val_nid = None
+        self.infer_test_nid = None
+        self.infer_g = None
+
+    def get_train_val_test_id(self, g, force_even_flg, pb):
+        if "trainer_id" in g.ndata:
+            train_nid = dgl.distributed.node_split(
+                g.ndata["train_mask"],
+                pb,
+                force_even=force_even_flg,
+                node_trainer_ids=g.ndata["trainer_id"],
+            )
+            val_nid = dgl.distributed.node_split(
+                g.ndata["val_mask"],
+                pb,
+                force_even=force_even_flg,
+                node_trainer_ids=g.ndata["trainer_id"],
+            )
+            test_nid = dgl.distributed.node_split(
+                g.ndata["test_mask"],
+                pb,
+                force_even=force_even_flg,
+                node_trainer_ids=g.ndata["trainer_id"],
+            )
+        else:
+            # TODO(ds4gnn):is train_nid local to current partition?
+            # TODO(ds4gnn):
+            # force enven will divide all train nodes evenly across partitions,
+            # thus, a trainer might be asigned remote train node
+            # the idea of "sampling stop at border" don't want to handle remote sampling
+            # thus force_even is set to False
+            train_nid = dgl.distributed.node_split(
+                g.ndata["train_mask"], pb, force_even=force_even_flg
+            )
+            val_nid = dgl.distributed.node_split(
+                g.ndata["val_mask"], pb, force_even=force_even_flg
+            )
+            test_nid = dgl.distributed.node_split(
+                g.ndata["test_mask"], pb, force_even=force_even_flg
+            )
+        return train_nid, val_nid, test_nid
 
     # mode: 'eager': load all graph into memory, 'lazy': load the graph when needed 
     def init_dist_graph_set(self, data_config_yaml, stop_at_the_border, num_gpus, mode='eager'):
@@ -152,51 +195,22 @@ class TrainController(PartitionSwitcher):
             )
             pb = g.get_partition_book()
 
-            self.dist_graph_set.append(g)
-            self.dist_graph_pbs.append(pb)
-            self.dist_graph_names.append(graph_name)
-
             force_even_flg = False if stop_at_the_border else True
 
-            if "trainer_id" in g.ndata:
-                train_nid = dgl.distributed.node_split(
-                    g.ndata["train_mask"],
-                    pb,
-                    force_even=force_even_flg,
-                    node_trainer_ids=g.ndata["trainer_id"],
-                )
-                val_nid = dgl.distributed.node_split(
-                    g.ndata["val_mask"],
-                    pb,
-                    force_even=force_even_flg,
-                    node_trainer_ids=g.ndata["trainer_id"],
-                )
-                test_nid = dgl.distributed.node_split(
-                    g.ndata["test_mask"],
-                    pb,
-                    force_even=force_even_flg,
-                    node_trainer_ids=g.ndata["trainer_id"],
-                )
-            else:
-                # TODO(ds4gnn):is train_nid local to current partition?
-                # TODO(ds4gnn):
-                # force enven will divide all train nodes evenly across partitions,
-                # thus, a trainer might be asigned remote train node
-                # the idea of "sampling stop at border" don't want to handle remote sampling
-                # thus force_even is set to False
-                train_nid = dgl.distributed.node_split(
-                    g.ndata["train_mask"], pb, force_even=force_even_flg
-                )
-                val_nid = dgl.distributed.node_split(
-                    g.ndata["val_mask"], pb, force_even=force_even_flg
-                )
-                test_nid = dgl.distributed.node_split(
-                    g.ndata["test_mask"], pb, force_even=force_even_flg
-                )
+            train_nid, val_nid, test_nid = self.get_train_val_test_id(g, force_even_flg, pb)
 
-            self.train_nid_sets.append(train_nid)
-            self.val_nid_sets.append(val_nid)
-            self.test_nid_sets.append(test_nid)
+            if graph_name == 'infer':
+                self.infer_val_nid = val_nid
+                self.infer_test_nid = test_nid
+                self.infer_g = g
+            else:
+                self.dist_graph_set.append(g)
+                self.dist_graph_pbs.append(pb)
+                self.dist_graph_names.append(graph_name)
+
+                self.train_nid_sets.append(train_nid)
+                self.val_nid_sets.append(val_nid)
+                self.test_nid_sets.append(test_nid)
 
             local_nid = pb.partid2nids(pb.partid).detach().numpy()
             # train_nid is lid when use VCMapPartition
@@ -240,6 +254,15 @@ class TrainController(PartitionSwitcher):
 
     def get_g(self):
         return self.dist_graph_set[self.dataloader_idx]
+
+    def get_infer_g(self):
+        return self.infer_g
+
+    def get_infer_val_nid(self):
+        return self.infer_val_nid
+ 
+    def get_infer_test_nid(self):
+        return self.infer_test_nid
 
     def get_epoch(self):
         return self.epoch_idx
@@ -310,11 +333,15 @@ class TrainController(PartitionSwitcher):
         return move_to_next
 
     def epoch_end(self, model, opt, local_train_acc, local_train_loss):
-        if mode == 1:
+        if self.mode == 1:
             self.switch_wo_seal()
             return
+        if self.mode == 2:
+            if self.epoch_idx % 5 == 0:
+                self.switch_wo_seal()
+            return
         else:
-            assert mode == 0
+            assert self.mode == 0
 
         self.local_train_acc_window.push(local_train_acc)
         self.local_train_loss_window.push(local_train_loss)
@@ -433,6 +460,8 @@ class TrainController(PartitionSwitcher):
     def switch_wo_seal(self):
         self.dataloader_idx = ( self.dataloader_idx + 1 ) % len(self.dataloader_set)
         self.dataloader = self.dataloader_set[self.dataloader_idx]
+        if th.distributed.get_rank() == 0:
+            print(f"epoch_idx: {self.epoch_idx}, SWTICH without seal to {self.dataloader_idx}, {self.dist_graph_names[self.dataloader_idx]}")
 
     def switch(self):
         # in this policy, switch always re-start from a ckpt

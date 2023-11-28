@@ -277,7 +277,7 @@ def main(args):
             args.local_rank, time.time()-t_b))
 
 
-    train_controller = dgl.distributed.TrainController(args.local_rank, args.num_epochs)
+    train_controller = dgl.distributed.TrainController(args.local_rank, args.num_epochs, mode=2)
     with open(args.graph_data_config, 'r') as f:
         graph_data_config = yaml.safe_load(f)
     train_controller.init_dist_graph_set(graph_data_config,
