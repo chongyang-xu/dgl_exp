@@ -108,6 +108,42 @@ def run(args, device, train_controller):
     iter_tput = []
     t_epoch = -1
     while train_controller.next_epoch(model, optimizer):
+        CKPT_PATH="/workspace/dgl_dsg/experiments"
+        CKPT_NAME="gcn2_ckpt_epoch_500_mode3"
+        CKPT_TAG=500
+        if False:
+            start = time.time()
+            ckpt = th.load(CKPT_PATH + "/" + CKPT_NAME)
+            model.load_state_dict(ckpt['model_state_dict'])
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            g = train_controller.get_infer_g()
+            print("use checkpoint for inference....")
+            model_infer = model
+            #train_controller.load_best_model(model_infer)
+            val_acc_t, test_acc_t = evaluate(
+                model_infer if args.standalone else model_infer.module,
+                g,
+                g.ndata["feat"],
+                g.ndata["label"],
+                train_controller.get_infer_val_nid(),
+                train_controller.get_infer_test_nid(),
+                args.batch_size_eval,
+                device,
+                args.stop_at_border,
+            )
+            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
+                        train_controller.get_epoch(),
+                        train_controller.get_rank(),
+                        val_acc_t[0].item()  / val_acc_t[1].item(),
+                        test_acc_t[0].item() / test_acc_t[1].item(),
+                        time.time() - start,
+                        val_acc_t[0], val_acc_t[1],
+                        test_acc_t[0], test_acc_t[1],
+                    )
+                )
+            exit(0)
+
+
         t_epoch = t_epoch + 1
         tic = time.time()
         sample_time = 0
@@ -216,6 +252,16 @@ def run(args, device, train_controller):
                     num_inputs,
                   )
               )
+
+        if False and train_controller.get_epoch() + 1 == CKPT_TAG:
+            if th.distributed.get_rank() == 0:
+                th.save({
+                    'epoch': CKPT_TAG,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': 0,
+                }, CKPT_NAME)
+
 
         if (train_controller.get_epoch() + 1) % args.eval_every == 0 and train_controller.get_epoch() != 0:
             start = time.time()
