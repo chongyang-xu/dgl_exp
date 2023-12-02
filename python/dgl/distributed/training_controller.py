@@ -340,6 +340,14 @@ class TrainController(PartitionSwitcher):
             if self.epoch_idx % 5 == 0:
                 self.switch_wo_seal()
             return
+        if self.mode == 3:
+            if self.epoch_idx % 25 == 0:
+                self.switch_wo_seal()
+            return
+        if self.mode == 4:
+            if self.epoch_idx % 50 == 0:
+                self.switch_wo_seal()
+            return
         else:
             assert self.mode == 0
 

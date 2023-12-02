@@ -277,7 +277,7 @@ def main(args):
             args.local_rank, time.time()-t_b))
 
 
-    train_controller = dgl.distributed.TrainController(args.local_rank, args.num_epochs, mode=2)
+    train_controller = dgl.distributed.TrainController(args.local_rank, args.num_epochs, mode=args.train_ctrl_mode)
     with open(args.graph_data_config, 'r') as f:
         graph_data_config = yaml.safe_load(f)
     train_controller.init_dist_graph_set(graph_data_config,
@@ -323,6 +323,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--disable_backup_server", action="store_true", default=False, help="when enabled, 1 graph server will serve 1 partition, no backup servers"
     )
+    parser.add_argument("--train_ctrl_mode", type=int, default=4)
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--num_hidden", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=3)
