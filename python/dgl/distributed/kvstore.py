@@ -980,7 +980,7 @@ class KVClient(object):
         self.disable_backup_server = disable_backup_server
         if disable_backup_server:
             # NOTE(ds4gnn): client to partition mapping when disable_backup_server
-            assert rpc.get_num_client() == self._server_count
+            assert rpc.get_num_client() == self._server_count or rpc.get_num_client() * 2 == self._server_count
             self._main_server_id = self._machine_id * self._group_count + self._client_id % self._group_count
             self._part_id = self._main_server_id
         else:
