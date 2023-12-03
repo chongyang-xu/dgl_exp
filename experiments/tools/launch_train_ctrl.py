@@ -30,6 +30,7 @@ parser.add_argument('--n_trainer_per_mach', type=int, required=True, help='numbe
 parser.add_argument('--n_sampler_per_trainer', type=int, required=True, help='number of samplers per TRAINER')
 
 parser.add_argument('--disable_backup_server', type=str, required=True,  choices=['True', 'False'], help='disable backup server or not')
+parser.add_argument("--train_ctrl_mode", type=int, default=4)
 
 parser.add_argument('--verbose', type=bool, required=False, help='print cmd line')
 
@@ -97,6 +98,7 @@ SINGLE_JOB_CMD += "{BORDER}{BACKUP_SERVER}".format(
                 BORDER=" --stop_at_border" if args.sampling == "bdr" else "",
                 BACKUP_SERVER=" --disable_backup_server" if args.disable_backup_server == 'True' else ""
                 )
+SINGLE_JOB_CMD += f" --train_ctrl_mode {args.train_ctrl_mode}"
 
 SINGLE_JOB_CMD += f" --eval_every {args.eval_every}"
 SINGLE_JOB_CMD += f" --batch_size_eval {args.batch_size_eval}"
