@@ -6,7 +6,7 @@ import torch as th
 import tqdm
 
 
-def inference_for_default_sampling(model, g, x, batch_size, device):
+def inference_for_default_sampling(model, g, x, batch_size, device, grouping_hack=False):
     """
     Inference with the GraphSAGE model on full neighbors (i.e. without
     neighbor sampling).
@@ -34,11 +34,15 @@ def inference_for_default_sampling(model, g, x, batch_size, device):
     else:
         infer_hidden_dim = model.n_hidden
  
+    policy = None
+    if grouping_hack:
+        policy = g.get_node_partition_policy('_N~infer') # node~_N~infer
     y = dgl.distributed.DistTensor(
         (g.num_nodes(), infer_hidden_dim),
         th.float32,
         "h",
         persistent=True,
+        part_policy=policy,
     )
     for i, layer in enumerate(model.layers):
         if i == len(model.layers) - 1:
@@ -47,6 +51,7 @@ def inference_for_default_sampling(model, g, x, batch_size, device):
                 th.float32,
                 "h_last",
                 persistent=True,
+                part_policy=policy,
             )
         print(
                 f"g.rank()={g.rank()}, |V|={g.num_nodes()}, eval batch size: {batch_size}"
@@ -184,8 +189,8 @@ def inference_for_stop_at_the_border(model, g, x, batch_size, device):
     return y
 
 # x feature of g
-def inference(model, g, x, batch_size, device, stop_at_border=False):
+def inference(model, g, x, batch_size, device, stop_at_border=False, grouping_hack=False):
     if stop_at_border == False:
-        return inference_for_default_sampling(model, g, x, batch_size, device)
+        return inference_for_default_sampling(model, g, x, batch_size, device, grouping_hack)
     else:
         return inference_for_stop_at_the_border(model, g, x, batch_size, device)

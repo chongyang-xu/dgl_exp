@@ -5,7 +5,7 @@ import time
 
 from ..base import DGLError
 from . import rpc
-from . import role, kvstore, dist_graph
+from . import role, kvstore, dist_graph, graph_services
 from .constants import MAX_QUEUE_SIZE, SERVER_EXIT, SERVER_KEEP_ALIVE
 
 
@@ -181,6 +181,10 @@ def start_server(
                 pass
             elif isinstance(req, kvstore.InitDataRequest):
                 pass
+            elif isinstance(req, graph_services.SamplingRequest) or isinstance(req, kvstore.PushRequest):
+                #TODO(ds4gnn): this is hack for full graph inference
+                # and should be used only other partitions are stop-at-the-border
+                graph_name_tmp = "infer"
             else:
                 assert False, f"{req} is not supported in partition_grouping_mode"
             for i in range(len(graph_name_group)):

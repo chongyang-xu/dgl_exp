@@ -40,7 +40,7 @@ def compute_acc(pred, labels):
     return n_correct_total
 
 
-def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, stop_at_border):
+def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, stop_at_border, grouping_hack=False):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -52,7 +52,7 @@ def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, st
     """
     model.eval()
     with th.no_grad():
-        pred = dist_model_inference(model, g, inputs, batch_size, device, stop_at_border)
+        pred = dist_model_inference(model, g, inputs, batch_size, device, stop_at_border, grouping_hack)
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid]), compute_acc(
         pred[test_nid], labels[test_nid]
@@ -278,7 +278,8 @@ def run(args, device, train_controller):
                 train_controller.get_infer_test_nid(),
                 args.batch_size_eval,
                 device,
-                args.stop_at_border,
+                False, # do full graph inference, dont use stop-at-the-border for inference #args.stop_at_border
+                grouping_hack=True, # flag for grouping mode, add infer policy
             )
             print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
                         train_controller.get_epoch(),
