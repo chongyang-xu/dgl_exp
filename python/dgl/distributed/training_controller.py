@@ -243,11 +243,11 @@ class TrainController(PartitionSwitcher):
         self.num_gpus = num_gpus
 
     def get_n_classes(self):
-        g = self.dist_graph_set[0]
-        labels = g.ndata["label"][np.arange(g.num_nodes())]
-        n_classes = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
-        del labels
-        return n_classes
+        #g = self.dist_graph_set[0]
+        #labels = g.ndata["label"][np.arange(g.num_nodes())]
+        #n_classes = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
+        #del labels
+        return self.n_classes
 
     def get_in_feats(self):
         return self.dist_graph_set[0].ndata["feat"].shape[1]

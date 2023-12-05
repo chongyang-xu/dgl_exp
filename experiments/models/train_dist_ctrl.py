@@ -278,7 +278,7 @@ def run(args, device, train_controller):
                 train_controller.get_infer_test_nid(),
                 args.batch_size_eval,
                 device,
-                False, # do full graph inference, dont use stop-at-the-border for inference #args.stop_at_border
+                False if g.get_partition_book().num_partitions() != 256 else True, # do full graph inference, dont use stop-at-the-border for inference #args.stop_at_border
                 grouping_hack=True, # flag for grouping mode, add infer policy
             )
             print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(

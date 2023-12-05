@@ -23,7 +23,7 @@ def inference_for_default_sampling(model, g, x, batch_size, device, grouping_hac
     # batches.
     # TODO: can we standardize this?
     stop_at_border = False
-    force_even_flg = False if stop_at_border else True
+    force_even_flg = False #if stop_at_border else True
     nodes = dgl.distributed.node_split(
         np.arange(g.num_nodes()),
         g.get_partition_book(),
