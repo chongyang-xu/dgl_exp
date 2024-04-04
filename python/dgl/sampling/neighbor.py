@@ -183,7 +183,7 @@ DGLGraph.sample_etype_neighbors = utils.alias_func(sample_etype_neighbors)
 def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None,
                      replace=False, copy_ndata=True, copy_edata=True,
                      _dist_training=False, exclude_edges=None,
-                     output_device=None):
+                     output_device=None, stop_at_border=True):
     """Sample neighboring edges of the given nodes and return the induced subgraph.
 
     For each node, a number of inbound (or outbound when ``edge_dir == 'out'``) edges

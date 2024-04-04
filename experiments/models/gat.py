@@ -5,6 +5,7 @@
 
 import dgl.nn.pytorch as dglnn
 import torch.nn as nn
+import torch as th
 from contextlib import contextmanager
 
 class GAT(nn.Module):

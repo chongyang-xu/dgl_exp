@@ -17,6 +17,10 @@ from infer_dist import inference as dist_model_inference
 import os
 import datetime
 
+def pprint(*args, **kwargs):
+    if th.distributed.get_rank() == 0:
+        print(*args, **kwargs)
+
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
     """
     Copys features and labels of a set of nodes onto GPU.
@@ -77,7 +81,7 @@ def run(args, device, data):
         train_nid,
         sampler,
         batch_size=args.batch_size,
-        shuffle=shuffle,
+        shuffle=False, # false for debug
         drop_last=False,
     )
     # Define model and optimizer
@@ -123,8 +127,8 @@ def run(args, device, data):
     for epoch in range(ckpt_epoch + 1, args.num_epochs):
         tic = time.time()
         sample_time = 0
-        g_copy_time = 0  # graph struct copy time
-        f_copy_time = 0  # feature copy time
+        f_fetch_time = 0  # graph struct copy time
+        pcie_time = 0  # feature copy time
         forward_time = 0
         backward_time = 0
         update_time = 0
@@ -135,6 +139,9 @@ def run(args, device, data):
         # Loop over the dataloader to sample the computation dependency graph
         # as a list of blocks.
         step_time = []
+        
+        rank = th.distributed.get_rank()
+        file_d = open(f"/workspace/dgl_dsg/experiments/tools/sample_log/dft_{args.graph_name}_{args.num_layers}_rank_{rank}_epoch_{epoch}_no_shuffle.txt", "w")
 
         with model.join():
             for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
@@ -144,8 +151,41 @@ def run(args, device, data):
                 batch_inputs, batch_labels = load_subtensor(
                     g, seeds, input_nodes, "cpu"
                 )
-                g_copy_end = time.time()
-                g_copy_time += g_copy_end - tic_step
+                
+                if args.num_layers == 3:
+                    src, dst = blocks[2].edges()
+                    src = blocks[2].srcdata[dgl.NID][src]
+                    dst = blocks[2].dstdata[dgl.NID][dst]
+                    file_d.write(str(dst))
+                    file_d.write('\n')
+                    file_d.write(str(src))
+                    file_d.write('\n')
+                    file_d.write('-'*20)
+                    file_d.write('\n')
+ 
+                src, dst = blocks[1].edges()
+                src = blocks[1].srcdata[dgl.NID][src]
+                dst = blocks[1].dstdata[dgl.NID][dst]
+                file_d.write(str(dst))
+                file_d.write('\n')
+                file_d.write(str(src))
+                file_d.write('\n')
+                file_d.write('-'*20)
+                file_d.write('\n')
+                src, dst = blocks[0].edges()
+                src = blocks[0].srcdata[dgl.NID][src]
+                dst = blocks[0].dstdata[dgl.NID][dst]
+                file_d.write(str(dst))
+                file_d.write('\n')
+                file_d.write(str(src))
+                file_d.write('\n')
+                file_d.write('-'*20)
+                file_d.write('\n')
+                file_d.write('-'*20)
+                file_d.write('\n')
+                
+                f_fetch_end = time.time()
+                f_fetch_time += f_fetch_end - tic_step
                 batch_labels = batch_labels.long()
                 num_seeds += len(blocks[-1].dstdata[dgl.NID])
                 num_inputs += len(blocks[0].srcdata[dgl.NID])
@@ -153,8 +193,8 @@ def run(args, device, data):
                 blocks = [block.to(device) for block in blocks]
                 batch_inputs = batch_inputs.to(device)
                 batch_labels = batch_labels.to(device)
-                f_copy_end = time.time()
-                f_copy_time += f_copy_end - g_copy_end
+                pcie_end = time.time()
+                pcie_time += pcie_end - f_fetch_end
                 # Compute loss and prediction
                 #start = time.time()
                 batch_pred = model(blocks, batch_inputs)
@@ -163,7 +203,7 @@ def run(args, device, data):
                 optimizer.zero_grad()
                 loss.backward()
                 compute_end = time.time()
-                forward_time += forward_end - f_copy_end
+                forward_time += forward_end - pcie_end
                 backward_time += compute_end - forward_end
 
                 optimizer.step()
@@ -180,7 +220,7 @@ def run(args, device, data):
                         if th.cuda.is_available()
                         else 0
                     )
-                    print("step_|epoch|{:04d}|step|{:04d}|part|{:04d}|loss|{:.4f}|"
+                    pprint("step_|epoch|{:04d}|step|{:04d}|part|{:04d}|loss|{:.4f}|"
                             "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}|train:{:.1f},{:.1f}".format(
                                 epoch,
                                 step,
@@ -197,14 +237,17 @@ def run(args, device, data):
                 account_time += account_end - update_end
                 start = account_end
         toc = time.time()
-        print("epoch_|epoch|{:04d}|part|{:04d}|epoch_seconds|{:.4f}|sampling|{:.4f}|g_copy|{:.4f}|f_copy|{:.4f}|"
+
+        file_d.close()
+
+        pprint("epoch_|epoch|{:04d}|part|{:04d}|epoch_seconds|{:.4f}|sampling|{:.4f}|f_fetch|{:.4f}|pcie|{:.4f}|"
                 "forward|{:.4f}|backward|{:.4f}|update|{:.4f}|account|{:.4f}|n_seed|{:012d}|n_input|{:012d}".format(
                     epoch,
                     g.rank(),
                     toc - tic,
                     sample_time,
-                    g_copy_time,
-                    f_copy_time,
+                    f_fetch_time,
+                    pcie_time,
                     forward_time,
                     backward_time,
                     update_time,
@@ -227,7 +270,7 @@ def run(args, device, data):
                 device,
                 args.stop_at_border,
             )
-            print("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
+            pprint("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
                         epoch,
                         g.rank(),
                         val_acc_t[0].item()  / val_acc_t[1].item(),

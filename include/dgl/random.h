@@ -44,8 +44,9 @@ class RandomEngine {
  public:
   /** @brief Constructor with default seed */
   RandomEngine() {
-    std::random_device rd;
-    SetSeed(rd());
+    //std::random_device rd;
+    //SetSeed(rd());
+    SetSeed(2024);
   }
 
   /** @brief Constructor with given seed */

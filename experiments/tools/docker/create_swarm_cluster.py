@@ -13,7 +13,7 @@ DS4GNN_MANAGER_IP = os.environ['DS4GNN_MANAGER_IP']
 DATASET_PATH = os.environ['DS4GNN_DATASET_PATH']
 WORKSPACE_PATH = os.environ['DS4GNN_WORKSPACE_PATH']
 
-CLUSTER_NET_NAME='ds4gnn_net'
+CLUSTER_NET_NAME="ds4gnn_net"
 
 opt = subprocess.check_output("whoami", shell=True)
 opt = opt.strip().decode()
@@ -70,10 +70,12 @@ with open(args.phy_hosts) as hosts:
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker swarm join-token worker", shell=True)
             res = opt.decode().strip().split("\n")
             worker_join = res[2].strip()
+            print(worker_join)
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} docker network create -d overlay --attachable {CLUSTER_NET_NAME}", shell=True)
-            #print(opt.decode())
+            print(opt.decode())
         else:
             opt = subprocess.check_output(f"{SSH_PREFIX} {h} {worker_join}", shell=True)
+            print(opt.decode())
 
 printg("Creating docker containers")
 ####os.system("docker build -f ./Dockerfile -t ds4gnn_run:latest .")
@@ -105,6 +107,7 @@ with open(args.phy_hosts) as hosts:
 
 os.system("rm hosts.docker")
 print(f"Listing created containers...")
+host_ips = []
 with open(args.phy_hosts) as hosts:
     for n, line in enumerate(hosts.readlines()):
         h = line.split(" ")[0]
@@ -118,12 +121,13 @@ with open(args.phy_hosts) as hosts:
                 print(f"{name} : {ipv4}")
                 if name[:8] == 'ds4gnn_w':
                     hf.write(ipv4.split('/')[0] +"\n" )
+                    host_ips.append(ipv4.split('/')[0])
 
 os.system(f"mv hosts.docker {DATASET_PATH}/ipconfigs/docker{dgl_worker_idx}.txt")
 
 printg("Starting submit-node container...")
 SUBMIT_NODE="ds4gnn_submit"
-RUN_CMD = f"docker run --cap-add SYS_NICE -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --shm-size=256g --name {SUBMIT_NODE} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
+RUN_CMD = f"docker run --cap-add SYS_NICE -v {DATASET_PATH}:/data -v {WORKSPACE_PATH}:/workspace --shm-size=512g --name {SUBMIT_NODE} --network {CLUSTER_NET_NAME} -dit ds4gnn_run:latest"
 os.system(RUN_CMD)
 
 printg("Downloading ds4gnn")
@@ -136,13 +140,13 @@ printg("Compiling ds4gnn")
 
 printg("Installing ds4gnn...")
 
-#CMD_INS="cd /workspace/dgl_dsg/python && python3 setup.py install"
-#os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD_INS}\"")
+CMD_INS="cd /workspace/dgl_dsg/python && python3 setup.py install"
+os.system(f"docker exec {SUBMIT_NODE} bash -c \"{CMD_INS}\"")
 #with open(f"{DATASET_PATH}/hosts") as ff:
 #    for i,ip in enumerate(ff.readlines()):
-#for i in range(dgl_worker_idx):
-#    WORKER=f"ds4gnn_w{i}"
-#    os.system(f"docker exec {SUBMIT_NODE} {SSH_PREFIX} {WORKER} \"{CMD_INS}\"")
+for i in host_ips:
+    WORKER=f"{i}"
+    os.system(f"docker exec {SUBMIT_NODE} {SSH_PREFIX} {WORKER} \"{CMD_INS}\"")
 
 tot_t = time.time() - start
 printg(f"Total time: {tot_t} seconds")

@@ -678,7 +678,7 @@ class DistGraph:
                 policy = PartitionPolicy(name.policy_str,
                     self.get_partition_book(),
                     partition_grouping_mode=self.partition_grouping_mode,
-                    graph_name_in=self.graph_name
+                    graph_name=self.graph_name
                 )
                 dtype, shape, _ = self._client.get_data_meta(str(name))
                 # We create a wrapper on the existing tensor in the kvstore.
@@ -1635,7 +1635,8 @@ def node_split(nodes, partition_book=None, ntype='_N', rank=None, force_even=Tru
     if force_even:
         num_clients = role.get_num_trainers()
         num_client_per_part = num_clients // partition_book.num_partitions()
-        assert num_clients % partition_book.num_partitions() == 0, \
+        # TODO(ds4gnn) a hack to run 128 of 256 patitions and run full graph inference
+        assert num_clients % partition_book.num_partitions() == 0 or num_clients * 2 == partition_book.num_partitions(), \
                 'The total number of clients should be multiple of the number of partitions.'
         part_nid = _split_even_to_part(partition_book, nodes)
         if num_client_per_part == 1:

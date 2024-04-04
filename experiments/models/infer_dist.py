@@ -59,14 +59,14 @@ def inference_for_default_sampling(model, g, x, batch_size, device, grouping_hac
 
         sampler = dgl.dataloading.NeighborSampler(
             [-1],
-            stop_at_border=stop_at_border
+    #        stop_at_border=stop_at_border
         )
         dataloader = dgl.dataloading.DistNodeDataLoader(
             g,
             nodes,
             sampler,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=True,
             drop_last=False,
         )
 
@@ -141,7 +141,7 @@ def inference_for_stop_at_the_border(model, g, x, batch_size, device):
 
         sampler = dgl.dataloading.NeighborSampler(
             [-1],
-            stop_at_border=stop_at_border
+            #stop_at_border=stop_at_border
         )
 
         dataloader = dgl.dataloading.DistNodeDataLoader(
@@ -149,7 +149,7 @@ def inference_for_stop_at_the_border(model, g, x, batch_size, device):
             nodes,
             sampler,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=True,
             drop_last=False,
         )
 

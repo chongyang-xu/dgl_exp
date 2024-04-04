@@ -937,7 +937,8 @@ def partition_graph(g, graph_name, num_parts, out_path, num_hops=1, part_method=
         print('[partition_time]|{}[3/3]|Splitting the graph into partitions (s)|{:.3f}|peak mem (GB)|{:.3f}'.format(
             part_method, time.time() - start, get_peak_mem()))
         if return_mapping:
-            orig_nids, orig_eids = _get_orig_ids(g, sim_g, orig_nids, orig_eids)
+            assert True
+        orig_nids, orig_eids = _get_orig_ids(g, sim_g, orig_nids, orig_eids)
         if save_first_n_parts > 0:
             assert False, "save_first_n_parts is not supported to random and metis"
     elif part_method[:2] == "vc":

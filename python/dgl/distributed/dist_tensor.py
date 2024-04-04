@@ -124,6 +124,8 @@ class DistTensor:
                     # If multiple partition policies match the input shape, we cannot
                     # decide which is the right one automatically. We should ask users
                     # to provide one.
+                    print(f"xxxxxxxxxxxxxxxxxxxxxxxxxx {policy_name}\n")
+                    #    print("xxxxxxxxxxxxxxxxxxxxxxx ds4gnn(hack code)\n")
                     assert part_policy is None, \
                             'Multiple partition policies match the input shape. ' \
                             + 'Please provide a partition policy explicitly.'

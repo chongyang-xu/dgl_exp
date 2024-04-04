@@ -95,6 +95,7 @@ class TrainController(PartitionSwitcher):
         self.sampler          = None
         self.dataloader       = None
         self.dataloader_set   = []
+        self.val_dataloader_set = []
         self.dataloader_idx   = 0
 
         self.resume_path      = None
@@ -114,6 +115,8 @@ class TrainController(PartitionSwitcher):
         self.AVG_DELTA_THRESHOLD_DEC_SPIKE = 0.1
 
         self.LOSS_DELTA_THRESHOLD = 1e-4
+
+        self.best_model_ckpt = None
 
         for _ in range(CONTROL_STATE_WINDOW_LENGTH):
             self.control_state_window.push(ControlState.INCREASING)
@@ -297,6 +300,7 @@ class TrainController(PartitionSwitcher):
         # #### self.collator = NodeCollator(g, nids, graph_sampler, **collator_kwargs)
         # the work is done at self.collator
         # #### self.graph_sampler.sample_blocks(self.g, items)
+        start = time.time()
         for idx, dg in enumerate(self.dist_graph_set):
             dataloader = dgl.dataloading.DistNodeDataLoader(
                 dg,
@@ -308,9 +312,27 @@ class TrainController(PartitionSwitcher):
             )
             self.dataloader_set.append(dataloader)
         self.dataloader = self.dataloader_set[0]
+ 
+        for idx, dg in enumerate(self.dist_graph_set):
+            val_dataloader = dgl.dataloading.DistNodeDataLoader(
+                dg,
+                self.val_nid_sets[idx],
+                self.sampler,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                drop_last=False,
+            )
+            self.val_dataloader_set.append(val_dataloader)
 
+        if th.distributed.get_rank() == 0:
+            dur = time.time() - start
+            print(f">>>>>> init_dataloader: time: {dur:.4f} seconds")
+ 
         # start from a random dataloader
         # self.init()
+
+    def get_valid_dataloader(self):
+        return self.val_dataloader_set[self.dataloader_idx]
 
     def get_dataloader(self):
         return self.dataloader
@@ -332,7 +354,7 @@ class TrainController(PartitionSwitcher):
             self.seal(model, opt, self.local_train_acc_window.get_list()[-1], self.local_train_loss_window.get_list()[-1])
         return move_to_next
 
-    def epoch_end(self, model, opt, local_train_acc, local_train_loss):
+    def epoch_end(self, model, opt, local_train_acc, local_v_acc, local_train_loss):
         if self.mode == 1:
             self.switch_wo_seal()
             return
@@ -348,6 +370,23 @@ class TrainController(PartitionSwitcher):
             if self.epoch_idx % 50 == 0:
                 self.switch_wo_seal()
             return
+        if self.mode == 100:
+            if local_v_acc < 0.4:
+                if self.epoch_idx % 20 == 0:
+                    self.switch_wo_seal()
+                return
+            else:
+                best_acc = 0.0 if self.best_model_ckpt is None else self.best_model_ckpt['acc']
+                if local_v_acc > best_acc:
+                    self.pick(model, opt, local_v_acc)
+
+                if local_v_acc < 0.8:
+                    if self.epoch_idx % 50 == 0:
+                        self.switch_wo_seal()
+                    return
+                else:
+                    return
+
         else:
             assert self.mode == 0
 
@@ -502,6 +541,10 @@ class TrainController(PartitionSwitcher):
             print(f"epoch_idx: {self.epoch_idx}, SWTICH to {self.dataloader_idx}, {self.dist_graph_names[self.dataloader_idx]}")
  
     def load_best_model(self, copy):
+        if self.mode == 100:
+            copy.load_state_dict(self.best_model_ckpt['model_state_dict'])
+            return copy
+        # other cases
         best_acc = 0
         best_idx = -1
         for idx, ckpt in enumerate(self.sealed_ckpt):
@@ -540,6 +583,19 @@ class TrainController(PartitionSwitcher):
 
         if th.distributed.get_rank() == 0:
             print(f"epoch_idx: {old_epoch}, FALLBACK to {self.epoch_idx}")
+
+    def pick(self, model, opt, v_acc):
+        # add one ckpt
+        ckpt_dict = {}
+        ckpt_dict['epoch'] = self.epoch_idx
+        ckpt_dict['model_state_dict'] = model.state_dict()
+        ckpt_dict['optimizer_state_dict'] = opt.state_dict()
+        ckpt_dict['acc'] = v_acc
+
+        self.best_model_ckpt = ckpt_dict
+
+        if th.distributed.get_rank() == 0:
+            print(f"epoch_idx: {self.epoch_idx}, PICK")
 
     def seal(self, model, opt, acc, loss=0.0):
         # add one ckpt

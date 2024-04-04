@@ -877,6 +877,7 @@ class RangePartitionBook(GraphPartitionBook):
     def _num_nodes(self, ntype=DEFAULT_NTYPE):
         """The total number of nodes"""
         lidx = -1 if self.first_n < 1 else self.first_n -1
+        # lidx = self._num_partitions - 1 # hack for halo hop > 0
         if ntype == DEFAULT_NTYPE:
             return int(self._max_node_ids[lidx])
         else:
@@ -885,6 +886,7 @@ class RangePartitionBook(GraphPartitionBook):
     def _num_edges(self, etype=DEFAULT_ETYPE):
         """The total number of edges"""
         lidx = -1 if self.first_n < 1 else self.first_n -1
+        # lidx = self._num_partitions - 1 # hack for halo hop > 0
         if etype in (DEFAULT_ETYPE, DEFAULT_ETYPE[1]):
             return int(self._max_edge_ids[lidx])
         else:

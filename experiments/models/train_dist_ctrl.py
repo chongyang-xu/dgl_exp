@@ -230,13 +230,36 @@ def run(args, device, train_controller):
                 account_end = time.time()
                 account_time += account_end - update_end
                 start = account_end
+
+        ####################################
+        # compute validation accuracy
+        ####################################
+        model.eval()
+        with model.join():
+        # validation
+            vt_start = time.time()
+            acc_vs = []
+        
+            for step, (input_nodes, seeds, blocks) in enumerate( train_controller.get_valid_dataloader() ):
+                batch_inputs, batch_labels = load_subtensor(
+                    train_controller.get_g(), seeds, input_nodes, "cpu"
+                )
+                batch_labels = batch_labels.long()
+                blocks = [block.to(device) for block in blocks]
+                batch_inputs = batch_inputs.to(device)
+                batch_labels = batch_labels.to(device)
+                batch_pred = model(blocks, batch_inputs)
+                acc_v = compute_acc(batch_pred, batch_labels)
+                acc_vs.append(acc_v[0].item()/acc_v[1].item())
+            vt_end = time.time()
+        model.train()
         toc = time.time()
 
         epoch_step_loss = np.mean(epoch_step_loss)
-        train_controller.epoch_end(model, optimizer, acc.item(), epoch_step_loss) # acc is last acc in cur epoch
+        train_controller.epoch_end(model, optimizer, acc.item(), np.mean(acc_vs),  epoch_step_loss) # acc is last acc in cur epoch
 
         print("epoch_|t_epoch|{:04d}|epoch|{:04d}|part|{:04d}|epoch_seconds|{:.4f}|sampling|{:.4f}|g_copy|{:.4f}|f_copy|{:.4f}|"
-                "forward|{:.4f}|backward|{:.4f}|update|{:.4f}|account|{:.4f}|n_seed|{:012d}|n_input|{:012d}".format(
+                "forward|{:.4f}|backward|{:.4f}|update|{:.4f}|account|{:.4f}|vt|{:.4f}|n_seed|{:012d}|n_input|{:012d}".format(
                     t_epoch,
                     train_controller.get_epoch(),
                     train_controller.get_rank(),
@@ -248,6 +271,7 @@ def run(args, device, train_controller):
                     backward_time,
                     update_time,
                     account_time,
+                    vt_end - vt_start,
                     num_seeds,
                     num_inputs,
                   )

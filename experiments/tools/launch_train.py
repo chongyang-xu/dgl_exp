@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('--one_id', type=str, required=True, help='a unique id to identify experiments setup')
 
-parser.add_argument('--dataset', type=str, required=True, choices=['ogbpr', 'ogbpa', 'cora'], help='')
+parser.add_argument('--dataset', type=str, required=True, choices=['ogbpr', 'ogbpa', 'ogbar', 'cora', 'reddit'], help='')
 parser.add_argument('--part_algo', type=str, required=True, choices=['random', 'metis', 'vcrandom', 'vcoblivious', 'vcbgl', 'vcns', 'vcns_coverage', 'vcns_proximity', 'vcst', 'vcdeg', 'vcrgrp'], help='')
 parser.add_argument('--part_hop', type=int, required=True, choices=[0, 1], help='')
 parser.add_argument('--n_parts', type=int, required=True, help='')
@@ -53,7 +53,9 @@ DEFAULT_FANOUT_OF_LAYER = {
 CLASS_NUM_OF = {
     'ogbpr' : 47,
     'ogbpa' : 172,
-    'cora'  : 7
+    'cora'  : 7,
+    'reddit': 41,
+    'ogbar' : 40,
 }
 
 N_PARTS= args.n_parts
