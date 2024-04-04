@@ -1,0 +1,4 @@
+volta12 n_gpu=2
+volta11 n_gpu=2
+volta09 n_gpu=2
+volta10 n_gpu=2

@@ -1,0 +1,510 @@
+import argparse
+import socket
+import time
+
+import numpy as np
+import torch as th
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import dgl
+import dgl.backend as FF
+
+from gcn import GCN
+from graphsage import SAGE as GraphSAGE
+from gat import GAT
+from infer_dist import inference as dist_model_inference
+from isolated_dataloader import IsolatedDataloader
+
+import os
+import datetime
+
+def pprint(*args, **kwargs):
+    if th.distributed.get_rank() == 0:
+        print(*args, **kwargs)
+
+def get_train_val_test_id(g, force_even_flg, pb):
+    if "trainer_id" in g.ndata:
+        train_nid = dgl.distributed.node_split(
+            g.ndata["train_mask"],
+            pb,
+            force_even=force_even_flg,
+            node_trainer_ids=g.ndata["trainer_id"],
+        )
+        val_nid = dgl.distributed.node_split(
+            g.ndata["val_mask"],
+            pb,
+            force_even=force_even_flg,
+            node_trainer_ids=g.ndata["trainer_id"],
+        )
+        test_nid = dgl.distributed.node_split(
+            g.ndata["test_mask"],
+            pb,
+            force_even=force_even_flg,
+            node_trainer_ids=g.ndata["trainer_id"],
+        )
+    else:
+        # TODO(ds4gnn):is train_nid local to current partition?
+        # TODO(ds4gnn):
+        # force enven will divide all train nodes evenly across partitions,
+        # thus, a trainer might be asigned remote train node
+        # the idea of "sampling stop at border" don't want to handle remote sampling
+        # thus force_even is set to False
+        train_nid = dgl.distributed.node_split(
+            g.ndata["train_mask"], pb, force_even=force_even_flg
+        )
+        val_nid = dgl.distributed.node_split(
+            g.ndata["val_mask"], pb, force_even=force_even_flg
+        )
+        test_nid = dgl.distributed.node_split(
+            g.ndata["test_mask"], pb, force_even=force_even_flg
+        )
+    return train_nid, val_nid, test_nid
+
+
+def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
+    """
+    Copys features and labels of a set of nodes onto GPU.
+    """
+    batch_inputs = (
+        g.ndata["feat"][input_nodes].to(device) if load_feat else None
+    )
+    batch_labels = g.ndata["label"][seeds].to(device)
+    return batch_inputs, batch_labels
+
+
+def compute_acc(pred, labels):
+    """
+    Compute the accuracy of prediction given the labels.
+    """
+    labels = labels.long()
+    n_correct = (th.argmax(pred, dim=1) == labels).float().sum()
+    n_correct_total = th.Tensor([n_correct, float(len(pred))])
+    th.distributed.all_reduce(n_correct_total, async_op=False)
+    return n_correct_total
+
+def evaluate(model, g, inputs, labels, val_nid, test_nid, batch_size, device, stop_at_border, part_bias=None):
+    """
+    Evaluate the model on the validation set specified by ``val_nid``.
+    g : The entire graph.
+    inputs : The features of all the nodes.
+    labels : The labels of all the nodes.
+    val_nid : the node Ids for validation.
+    batch_size : Number of nodes to compute at the same time.
+    device : The GPU device to evaluate on.
+    """
+    model.eval()
+    with th.no_grad():
+        pred = dist_model_inference(model, g, inputs, batch_size, device, stop_at_border, part_bias=part_bias)
+    model.train()
+    # print false samples 
+
+    pred_test = pred[test_nid]
+    mask_wrong = th.argmax(pred_test, dim=1) != labels[test_nid]
+    wrong_id = test_nid[mask_wrong]
+    #pprint(f"{wrong_id.shape}/{test_nid.shape}")
+    #pprint(f"{wrong_id}")
+
+    return compute_acc(pred[val_nid], labels[val_nid]), compute_acc(
+        pred[test_nid], labels[test_nid]
+    )
+
+
+def run(args, device, infer_data):
+    if args.graph_name == "ogbpr":
+        in_feats = 100
+        n_classes = 47
+    elif args.graph_name == "ogbar":
+        in_feats = 128
+        n_classes = 40
+    elif args.graph_name == "ogbpa":
+        in_feats = 128
+        n_classes = 172
+    elif args.graph_name == "cora":
+        in_feats = 1433
+        n_classes = 7
+    elif args.graph_name == "reddit":
+        in_feats = 602
+        n_classes = 41
+    else:
+        assert False
+    # Define model and optimizer
+    if args.model == 'sage':
+        model = GraphSAGE(in_feats, args.num_hidden, n_classes,
+                          args.num_layers, F.relu, args.dropout,)
+        model.name = 'sage'
+    elif args.model == 'gat':
+        n_heads = 4
+        model = GAT(in_feats, args.num_hidden, n_classes, n_heads,
+                          args.num_layers, F.relu, args.dropout)
+        model.name= 'gat'
+    else:
+        assert args.model == 'gcn'
+        model = GCN(in_feats, args.num_hidden, n_classes,
+                    args.num_layers, F.relu, args.dropout,)
+        model.name = 'gcn'
+
+    model = model.to(device)
+    if not args.standalone:
+        if args.num_gpus == -1:
+            model = th.nn.parallel.DistributedDataParallel(model)
+        else:
+            model = th.nn.parallel.DistributedDataParallel(
+                model, device_ids=[device], output_device=device
+            )
+    loss_fcn = nn.CrossEntropyLoss()
+    loss_fcn = loss_fcn.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    
+    #part_bias = nn.Parameter(th.Tensor(in_feats))
+    ##part_bias.data.uniform_(0.0, 1.0)
+    #part_bias.data.fill_(0.0)
+    #part_opt = optim.Adam([part_bias], lr=args.lr)
+
+    # resume from checkpoint if resume_path is not None
+    ckpt_epoch = -1
+    if args.resume_path is not None:
+        # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+        # ckpt = th.load(checkpoint_path, map_location=map_location))
+        ckpt = th.load(args.resume_path)
+        model.load_state_dict(ckpt['model_state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        ckpt_epoch = ckpt['epoch']
+
+    # loader
+    loader = IsolatedDataloader(args)
+    rank = loader.get_rank()
+    # Training loop
+    iter_tput = []
+    for epoch in range(ckpt_epoch + 1, args.num_epochs):
+        tic = time.time()
+
+        sample_time = 0
+        f_fetch_time = 0  # graph struct copy time
+        pcie_time = 0  # feature copy time
+        forward_time = 0
+        backward_time = 0
+        update_time = 0
+        account_time = 0  # calculating time for log
+        num_seeds = 0
+        num_inputs = 0
+        start = time.time()
+        # Loop over the dataloader to sample the computation dependency graph
+        # as a list of blocks.
+        step_time = []
+        dataloader = loader.get_cur_dataloader(args, epoch)
+        max_step   = loader.get_max_step()
+        
+#        file_d = open(f"/workspace/dgl_dsg/experiments/tools/sample_log/random_{args.graph_name}_{args.num_layers}_rank_{rank}_epoch_{epoch}_real_no_shuffle.txt", "w")
+
+        with model.join():
+            if True:
+            #try:
+                for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+                    tic_step = time.time()
+                    sample_time += tic_step - start
+                    # fetch features/labels
+                    batch_inputs = loader.get_batch_inputs(input_nodes)
+                
+#                    if args.num_layers == 3:
+#                        src, dst = blocks[2].edges()
+#                        src = blocks[2].srcdata[dgl.NID][src]
+#                        dst = blocks[2].dstdata[dgl.NID][dst]
+#                        file_d.write(str(dst))
+#                        file_d.write('\n')
+#                        file_d.write(str(src))
+#                        file_d.write('\n')
+#                        file_d.write('-'*20)
+#                        file_d.write('\n')
+                
+#                    src, dst = blocks[1].edges()
+#                    src = blocks[1].srcdata[dgl.NID][src]
+#                    dst = blocks[1].dstdata[dgl.NID][dst]
+#                    file_d.write(str(dst))
+#                    file_d.write('\n')
+#                    file_d.write(str(src))
+#                    file_d.write('\n')
+#                    file_d.write('-'*20)
+#                    file_d.write('\n')
+#                    src, dst = blocks[0].edges()
+#                    src = blocks[0].srcdata[dgl.NID][src]
+#                    dst = blocks[0].dstdata[dgl.NID][dst]
+#                    file_d.write(str(dst))
+#                    file_d.write('\n')
+#                    file_d.write(str(src))
+#                    file_d.write('\n')
+#                    file_d.write('-'*20)
+#                    file_d.write('\n')
+#                    file_d.write('-'*20)
+#                    file_d.write('\n')
+
+                    batch_labels = loader.get_batch_labels(seeds)
+                    #batch_inputs = batch_inputs + part_bias
+                    f_fetch_end = time.time()
+                    f_fetch_time += f_fetch_end - tic_step
+                    batch_labels = batch_labels.long()
+                    num_seeds += len(blocks[-1].dstdata[dgl.NID])
+                    num_inputs += len(blocks[0].srcdata[dgl.NID])
+                    # move to target device
+                    blocks = [block.to(device) for block in blocks]
+                    batch_inputs = batch_inputs.to(device)
+                    batch_labels = batch_labels.to(device)
+                    pcie_end = time.time()
+                    pcie_time += pcie_end - f_fetch_end
+                    # Compute loss and prediction
+                    #start = time.time()
+                    batch_pred = model(blocks, batch_inputs)
+                    loss = loss_fcn(batch_pred, batch_labels)
+                    forward_end = time.time()
+                    optimizer.zero_grad()
+                    ###################
+                    #part_opt.zero_grad() # part_bias
+                    ###################
+                    loss.backward()
+                    compute_end = time.time()
+                    forward_time += forward_end - pcie_end
+                    backward_time += compute_end - forward_end
+
+                    optimizer.step()
+                    ###################
+                    #part_opt.step() # part_bias
+                    ###################
+                    update_end = time.time()
+                    update_time += update_end - compute_end
+
+
+
+                    step_t = update_end - tic_step
+                    step_time.append(step_t)
+                    iter_tput.append(len(blocks[-1].dstdata[dgl.NID]) / step_t)
+                    if step % args.log_every == 0:
+                        acc_t = compute_acc(batch_pred, batch_labels)
+                        gpu_mem_alloc = (
+                            th.cuda.max_memory_allocated() / 1000000
+                            if th.cuda.is_available()
+                            else 0
+                        )
+                        pprint("step_|epoch|{:04d}|step|{:04d}|part|{:04d}|loss|{:.4f}|"
+                                "train_acc|{:.4f}|sample_p_s|{:.2f}|gpu_mb|{:.1f}|step_time|{:.2f}|train:{:.1f},{:.1f}".format(
+                                    epoch,
+                                    step,
+                                    rank,
+                                    loss.item(),
+                                    acc_t[0].item()/acc_t[1].item(),
+                                    np.mean(iter_tput[3:]),
+                                    gpu_mem_alloc,
+                                    np.sum(step_time[-args.log_every:]),
+                                    acc_t[0].item(), acc_t[1].item()
+                                )
+                            )
+                    account_end = time.time()
+                    account_time += account_end - update_end
+                    start = account_end
+                    if step >= max_step:
+                        break
+                # end for
+            #except Exception as e:
+                # Code to handle any exception
+            #    print(f"An error occurred: {e} at Rank {rank}")
+
+        toc = time.time()
+        
+#        file_d.close()
+        
+        pprint("epoch_|epoch|{:04d}|part|{:04d}|epoch_seconds|{:.4f}|sampling|{:.4f}|f_fetch|{:.4f}|pcie|{:.4f}|"
+                "forward|{:.4f}|backward|{:.4f}|update|{:.4f}|account|{:.4f}|n_seed|{:012d}|n_input|{:012d}".format(
+                    epoch,
+                    rank,
+                    toc - tic,
+                    sample_time,
+                    f_fetch_time,
+                    pcie_time,
+                    forward_time,
+                    backward_time,
+                    update_time,
+                    account_time,
+                    num_seeds,
+                    num_inputs,
+                  )
+              )
+
+        if (epoch + 1) % args.eval_every == 0 and epoch != 0:
+            start = time.time()
+            g, valid_nid, test_nid = infer_data # full graph inference
+
+            val_acc_t, test_acc_t = evaluate(
+                model if args.standalone else model.module,
+                g,
+                g.ndata["feat"],
+                g.ndata["label"],
+                valid_nid,
+                test_nid,
+                args.batch_size_eval,
+                device,
+                args.stop_at_border,
+                None, #part_bias,
+            )
+            pprint("infer_|epoch|{:04d}|part|{:04d}|val_acc|{:.4f}|test_acc|{:.4f}|time_sec|{:.4f}|val:{:.1f},{:.1f}|test:{:.1f},{:.1f}".format(
+                        epoch,
+                        rank,
+                        val_acc_t[0].item()  / val_acc_t[1].item(),
+                        test_acc_t[0].item() / test_acc_t[1].item(),
+                        time.time() - start,
+                        val_acc_t[0], val_acc_t[1],
+                        test_acc_t[0], test_acc_t[1],
+                    )
+                )
+        if args.checkpoint_path is not None and args.checkpoint_every > 0:
+            # epoch starts from 0
+            if (epoch + 1) % args.checkpoint_every == 0 and rank == 0:
+                ckpt_name = f"{args.checkpoint_path}/epoch_{epoch:03d}.pt"
+                th.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss.item(),
+                }, ckpt_name)
+
+def main(args):
+    print(socket.gethostname(), "Initializing DGL dist")
+    t_b = time.time()
+    dgl.distributed.initialize(args.ip_config, net_type=args.net_type,
+                               disable_backup_server=args.disable_backup_server)
+    print("local_rank={}, initialize TIME={:.4f} sec".format(
+        args.local_rank, time.time()-t_b))
+    if not args.standalone:
+        print(socket.gethostname(), "Initializing DGL process group")
+        t_b = time.time()
+
+        if args.backend == "gloo":
+            th.distributed.init_process_group(backend=args.backend)
+        elif args.backend == "nccl":
+            master_ip   = os.environ['MASTER_ADDR']
+            master_port = os.environ['MASTER_PORT']
+            w_size      = int(os.environ['ROLE_WORLD_SIZE'])
+            w_rank      = int(os.environ['ROLE_RANK'])
+            os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
+            os.environ['NCCL_DEBUG']='WARN'
+            dist_init_method = 'tcp://{master_ip}:{master_port}'.format(master_ip=master_ip, master_port='1234')
+            th.distributed.init_process_group(backend=args.backend,
+                                              init_method=dist_init_method,
+                                              world_size=w_size,
+                                              rank=w_rank,
+                                              timeout=datetime.timedelta(seconds=10)
+                                             )
+        print("local_rank={}, init_process_group TIME={:.4f} sec".format(
+            args.local_rank, time.time()-t_b))
+    print(socket.gethostname(), "Initializing DistGraph")
+
+    g = dgl.distributed.DistGraph(
+        args.graph_name,
+        part_config=f"/data/ds_pre/{args.graph_name}/data_part_n{args.n_parts}_metis_1_{args.n_parts}/{args.graph_name}.json",
+        partition_grouping_mode=False,
+    )
+
+    pb = g.get_partition_book()
+
+    force_even_flg = False if args.stop_at_border else True
+
+    train_nid, valid_nid, test_nid = get_train_val_test_id(g, force_even_flg, pb)
+
+    infer_data = g, valid_nid, test_nid
+    if args.num_gpus == -1:
+        device = th.device("cpu")
+    else:
+        dev_id = th.distributed.get_rank() % args.num_gpus
+        device = th.device("cuda:" + str(dev_id))
+    run(args, device, infer_data)
+    print("parent ends")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="GCN")
+    parser.add_argument("--graph_name", type=str, help="graph name")
+    parser.add_argument("--n_parts", type=int, help="number of partitions")
+#    parser.add_argument("--id", type=int, help="the partition id")
+    parser.add_argument(
+        "--ip_config", type=str, help="The file for IP configuration"
+    )
+    parser.add_argument(
+        "--part_config", type=str, help="The path to the partition config file"
+    )
+    parser.add_argument(
+        "--n_classes", type=int, default=0, help="the number of classes"
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="gloo",
+        help="pytorch distributed backend",
+    )
+    parser.add_argument(
+        "--num_gpus",
+        type=int,
+        default=-1,
+        help="the number of GPU device. Use -1 for CPU training",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="sage",
+        required=True,
+        help="gnn model in(sage, gcn, gat)",
+    )
+    parser.add_argument(
+        "--stop_at_border", action="store_true", default=False, help="sampler will stop at border"
+    )
+    parser.add_argument(
+        "--disable_backup_server", action="store_true", default=False, help="when enabled, 1 graph server will serve 1 partition, no backup servers"
+    )
+    parser.add_argument("--num_epochs", type=int, default=20)
+    parser.add_argument("--num_hidden", type=int, default=128)
+    parser.add_argument("--num_layers", type=int, default=3)
+    parser.add_argument("--fan_out", type=str, default="15,10,5")
+    parser.add_argument("--batch_size", type=int, default=1000)
+    parser.add_argument("--batch_size_eval", type=int, default=100000)
+    parser.add_argument("--log_every", type=int, default=20)
+    parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument("--lr", type=float, default=0.003)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument(
+        "--local_rank", type=int, help="get rank of the process"
+    )
+    parser.add_argument(
+        "--standalone", action="store_true", help="run in the standalone mode"
+    )
+    parser.add_argument(
+        "--pad-data",
+        default=False,
+        action="store_true",
+        help="Pad train nid to the same length across machine, to ensure num "
+             "of batches to be the same.",
+    )
+    parser.add_argument(
+        "--net_type",
+        type=str,
+        default="socket",
+        help="backend net type, 'socket' or 'tensorpipe'",
+    )
+    parser.add_argument(
+        "--resume_path",
+        type=str,
+        default=None,
+        help="resume from a path of a checkpoint",
+    )
+    parser.add_argument(
+        "--checkpoint_path",
+        type=str,
+        default=None,
+        help="a path to store all checkpoints",
+    )
+    parser.add_argument(
+        "--checkpoint_every",
+        type=int,
+        default=-1,
+        help="save a checkpoint erver N EPOCHS",
+    )
+    args = parser.parse_args()
+
+    print(args)
+    main(args)

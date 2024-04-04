@@ -1,0 +1,2 @@
+python3 new_parse_sample_log.py
+python3 new_parse_sample_log_3.py
