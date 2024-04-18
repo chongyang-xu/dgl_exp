@@ -309,6 +309,8 @@ COOMatrix CSRRowWisePickWithN(
       IdxType len = num_picks_fn(
           rid, indptr[rid], indptr[rid + 1] - indptr[rid], indices, data,
 	  gideg_ptr[0], lideg_ptr[0], nullptr);
+      //fill_in in degree data
+      lideg_ptr[rid] = indptr[rid + 1] - indptr[rid];
       local_prefix[local_i + 1] = local_prefix[local_i] + len;
     }
     global_prefix[thread_id + 1] = local_prefix[num_local];
