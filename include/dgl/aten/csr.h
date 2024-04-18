@@ -538,7 +538,8 @@ std::pair<COOMatrix, FloatArray> CSRLaborSampling(
  */
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples,
-    NDArray prob_or_mask = NDArray(), bool replace = true);
+    NDArray prob_or_mask = NDArray(), bool replace = true,
+    IdArray gideg = IdArray(), IdArray lideg = IdArray(), int64_t* resample_num=nullptr);
 
 /**
  * @brief Randomly select a fixed number of non-zero entries for each edge type

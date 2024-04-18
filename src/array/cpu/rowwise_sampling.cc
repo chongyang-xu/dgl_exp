@@ -116,6 +116,25 @@ inline NumPicksFn<IdxType> GetSamplingUniformNumPicksFn(
 }
 
 template <typename IdxType>
+inline NumPicksWithNFn<IdxType> GetSamplingUniformNumPicksWithNFn(
+    int64_t num_samples, bool replace) {
+  NumPicksWithNFn<IdxType> num_picks_fn = [num_samples, replace](
+                                         IdxType rowid, IdxType off,
+                                         IdxType len, const IdxType* col,
+                                         const IdxType* data,
+					 IdxType gideg, IdxType lideg,
+					 int64_t* resample_num){
+    const int64_t max_num_picks = (num_samples == -1) ? len : num_samples;
+    if (replace) {
+      return static_cast<IdxType>(len == 0 ? 0 : max_num_picks);
+    } else {
+      return std::min(static_cast<IdxType>(max_num_picks), len);
+    }
+  };
+  return num_picks_fn;
+}
+
+template <typename IdxType>
 inline PickFn<IdxType> GetSamplingUniformPickFn(
     int64_t num_samples, bool replace) {
   PickFn<IdxType> pick_fn = [num_samples, replace](
@@ -130,6 +149,28 @@ inline PickFn<IdxType> GetSamplingUniformPickFn(
   };
   return pick_fn;
 }
+
+
+template <typename IdxType>
+inline PickWithNFn<IdxType> GetSamplingUniformPickWithNFn(
+    int64_t num_samples, bool replace) {
+  PickWithNFn<IdxType> pick_fn = [num_samples, replace](
+                                IdxType rowid, IdxType off, IdxType len,
+                                IdxType num_picks, const IdxType* col,
+                                const IdxType* data, IdxType* out_idx,
+				IdxType gideg, IdxType lideg, int64_t* num) {
+    RandomEngine::ThreadLocal()->UniformChoiceWithN<IdxType>(
+        num_picks, len, out_idx, replace, gideg, lideg, num);
+
+    // update from the template pick_fn update the counter
+    // t10n TBD
+    for (int64_t j = 0; j < num_picks; ++j) {
+      out_idx[j] += off;
+    }
+  };
+  return pick_fn;
+}
+
 
 template <typename IdxType>
 inline EtypeRangePickFn<IdxType> GetSamplingUniformRangePickFn(
@@ -197,8 +238,10 @@ inline PickFn<IdxType> GetSamplingBiasedPickFn(
 template <DGLDeviceType XPU, typename IdxType, typename DType>
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, NDArray prob_or_mask,
-    bool replace) {
+    bool replace, int64_t* resample_num) {
+    //, IdArray gideg, IdArray lideg) {
   // If num_samples is -1, select all neighbors without replacement.
+  printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
   CHECK(prob_or_mask.defined());
   auto num_picks_fn =
@@ -209,21 +252,21 @@ COOMatrix CSRRowWiseSampling(
 }
 
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, float>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, float>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, double>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, double>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, int8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, int8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, uint8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, uint8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
 
 template <DGLDeviceType XPU, typename IdxType, typename DType>
 COOMatrix CSRRowWisePerEtypeSampling(
@@ -269,19 +312,23 @@ template COOMatrix CSRRowWisePerEtypeSampling<kDGLCPU, int64_t, uint8_t>(
 
 template <DGLDeviceType XPU, typename IdxType>
 COOMatrix CSRRowWiseSamplingUniform(
-    CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace) {
+    CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace,
+    IdArray gideg, IdArray lideg, int64_t* resample_num) {
   // If num_samples is -1, select all neighbors without replacement.
+  printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
   auto num_picks_fn =
-      GetSamplingUniformNumPicksFn<IdxType>(num_samples, replace);
-  auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);
-  return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn, num_picks_fn);
+      GetSamplingUniformNumPicksWithNFn<IdxType>(num_samples, replace);
+  //auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);
+  //return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn, num_picks_fn);
+  auto pick_fn = GetSamplingUniformPickWithNFn<IdxType>(num_samples, replace);
+  return CSRRowWisePickWithN(mat, rows, num_samples, replace, pick_fn, num_picks_fn, gideg, lideg, resample_num);
 }
 
 template COOMatrix CSRRowWiseSamplingUniform<kDGLCPU, int32_t>(
-    CSRMatrix, IdArray, int64_t, bool);
+    CSRMatrix, IdArray, int64_t, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSamplingUniform<kDGLCPU, int64_t>(
-    CSRMatrix, IdArray, int64_t, bool);
+    CSRMatrix, IdArray, int64_t, bool, IdArray, IdArray, int64_t*);
 
 template <DGLDeviceType XPU, typename IdxType>
 COOMatrix CSRRowWisePerEtypeSamplingUniform(
@@ -401,8 +448,10 @@ template COOMatrix COORowWisePerEtypeSampling<kDGLCPU, int64_t, uint8_t>(
 
 template <DGLDeviceType XPU, typename IdxType>
 COOMatrix COORowWiseSamplingUniform(
-    COOMatrix mat, IdArray rows, int64_t num_samples, bool replace) {
+    COOMatrix mat, IdArray rows, int64_t num_samples, bool replace){
+    //IdArray gideg, IdArray lideg) {
   // If num_samples is -1, select all neighbors without replacement.
+  printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
   auto num_picks_fn =
       GetSamplingUniformNumPicksFn<IdxType>(num_samples, replace);

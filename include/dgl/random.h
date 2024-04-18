@@ -174,6 +174,10 @@ class RandomEngine {
   void UniformChoice(
       IdxType num, IdxType population, IdxType* out, bool replace = true);
 
+  template <typename IdxType>
+void UniformChoiceWithN(
+    IdxType num, IdxType population, IdxType* out, bool replace,
+    IdxType gideg, IdxType lideg, int64_t* resample_num);
   /**
    * @brief Pick random integers from population by uniform distribution.
    *

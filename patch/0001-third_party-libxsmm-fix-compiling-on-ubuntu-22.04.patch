@@ -1,0 +1,31 @@
+From cf735675842d8b4aa7d6b56e854614d9bb9b65b7 Mon Sep 17 00:00:00 2001
+From: Chongyang Xu <cxu@mpi-sws.org>
+Date: Thu, 18 Apr 2024 13:14:13 +0000
+Subject: [PATCH] third_party: libxsmm: fix compiling on ubuntu 22.04
+
+---
+ include/libxsmm_sync.h | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/include/libxsmm_sync.h b/include/libxsmm_sync.h
+index 1f40fab1c..fc14c0e87 100644
+--- a/include/libxsmm_sync.h
++++ b/include/libxsmm_sync.h
+@@ -464,11 +464,11 @@ typedef enum libxsmm_atomic_kind {
+ #     define LIBXSMM_SYNC_YIELD pthread_yield_np()
+ #   else
+ #     if defined(__USE_GNU) || !defined(__BSD_VISIBLE)
+-      LIBXSMM_EXTERN int pthread_yield(void) LIBXSMM_THROW;
++      LIBXSMM_EXTERN int sched_yield(void) LIBXSMM_THROW;
+ #     else
+-      LIBXSMM_EXTERN void pthread_yield(void);
++      LIBXSMM_EXTERN void sched_yield(void);
+ #     endif
+-#     define LIBXSMM_SYNC_YIELD pthread_yield()
++#     define LIBXSMM_SYNC_YIELD sched_yield()
+ #   endif
+ #   if defined(LIBXSMM_LOCK_SYSTEM_SPINLOCK) && defined(__APPLE__) && defined(__MACH__)
+ #     define LIBXSMM_LOCK_SPINLOCK mutex
+-- 
+2.34.1
+

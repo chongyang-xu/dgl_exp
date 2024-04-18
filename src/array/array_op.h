@@ -180,7 +180,7 @@ std::pair<COOMatrix, FloatArray> CSRLaborSampling(
 template <DGLDeviceType XPU, typename IdType, typename DType>
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, NDArray prob_or_mask,
-    bool replace);
+    bool replace, IdArray gideg, IdArray lideg, int64_t* resample_num=nullptr);
 
 // FloatType is the type of probability data.
 template <DGLDeviceType XPU, typename IdType, typename DType>
@@ -192,7 +192,8 @@ COOMatrix CSRRowWisePerEtypeSampling(
 
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix CSRRowWiseSamplingUniform(
-    CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace);
+    CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace,
+    IdArray gideg, IdArray lideg, int64_t* resample_num = nullptr);
 
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix CSRRowWisePerEtypeSamplingUniform(

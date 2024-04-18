@@ -65,6 +65,27 @@ template void RandomEngine::Choice<int64_t, uint8_t>(
     int64_t num, FloatArray prob, int64_t* out, bool replace);
 
 template <typename IdxType>
+void RandomEngine::UniformChoiceWithN(
+    IdxType num, IdxType population, IdxType* out, bool replace,
+    IdxType gideg, IdxType lideg, int64_t* resample_num) {
+
+  if (!replace)
+    CHECK_LE(2, 1)
+        << "replace=false is not considered here";
+
+  *resample_num = 0;
+  for (IdxType i = 0; i < num; ++i){
+	  IdxType val = -1; 
+	  do{
+	      val = RandInt(gideg);
+	      *resample_num++;
+	  } while (val >= lideg);
+	  out[i] = val;
+  }
+  *resample_num -= num;
+}
+
+template <typename IdxType>
 void RandomEngine::UniformChoice(
     IdxType num, IdxType population, IdxType* out, bool replace) {
   CHECK_GE(num, 0) << "The numbers to sample should be non-negative.";
