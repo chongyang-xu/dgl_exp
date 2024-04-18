@@ -278,6 +278,8 @@ COOMatrix CSRRowWisePickWithN(
   IdxType* lideg_ptr = static_cast<IdxType*>(lideg->data);
   std::vector<int64_t> resample_num_all(num_threads, 0);
 
+  std::unique_ptr<int64_t[]> per_thread_n(new int64_t[num_threads]);
+  std::unique_ptr<int64_t[]> per_thread_tmp(new int64_t[num_threads]);
   // TODO(BarclayII) Using OMP parallel directly instead of using
   // runtime::parallel_for does not handle exceptions well (directly aborts when
   // an exception pops up). It runs faster though because there is less
@@ -297,7 +299,6 @@ COOMatrix CSRRowWisePickWithN(
 
     const int64_t num_local = end_i - start_i;
 
-    int64_t resample_num_this_thread = 0;
 
     // make sure we don't have to pay initialization cost
     std::unique_ptr<int64_t[]> local_prefix(new int64_t[num_local + 1]);
@@ -310,7 +311,7 @@ COOMatrix CSRRowWisePickWithN(
           rid, indptr[rid], indptr[rid + 1] - indptr[rid], indices, data,
 	  gideg_ptr[0], lideg_ptr[0], nullptr);
       //fill_in in degree data
-      lideg_ptr[rid] = indptr[rid + 1] - indptr[rid];
+      lideg_ptr[i] = indptr[rid + 1] - indptr[rid];
       local_prefix[local_i + 1] = local_prefix[local_i] + len;
     }
     global_prefix[thread_id + 1] = local_prefix[num_local];
@@ -324,16 +325,25 @@ COOMatrix CSRRowWisePickWithN(
       picked_row = IdArray::Empty({global_prefix[num_threads]}, idtype, ctx);
       picked_col = IdArray::Empty({global_prefix[num_threads]}, idtype, ctx);
       picked_idx = IdArray::Empty({global_prefix[num_threads]}, idtype, ctx);
+
+
+//for(int i=0; i < num_rows; i++){
+//  	std::cout << "gideg_ptr: " << gideg_ptr[i] << std::endl;
+//  	std::cout << "lideg_ptr: " << lideg_ptr[i] << std::endl;
+//      }
+
     }
 
 #pragma omp barrier
     IdxType* picked_rdata = picked_row.Ptr<IdxType>();
     IdxType* picked_cdata = picked_col.Ptr<IdxType>();
     IdxType* picked_idata = picked_idx.Ptr<IdxType>();
+    int64_t* ptr = per_thread_tmp.get() + thread_id;
 
     const IdxType thread_offset = global_prefix[thread_id];
 
-    int64_t per_row_count=0;
+    per_thread_n[thread_id] = 0;
+ 
     for (int64_t i = start_i; i < end_i; ++i) {
       const IdxType rid = rows_data[i];
 
@@ -346,12 +356,12 @@ COOMatrix CSRRowWisePickWithN(
       const int64_t num_picks =
           thread_offset + local_prefix[local_i + 1] - row_offset;
 
-      per_row_count=0;
+      *ptr = 0;
       pick_fn(
           rid, off, len, num_picks, indices, data, picked_idata + row_offset,
-	  gideg_ptr[i], lideg_ptr[i], &per_row_count);
+	  gideg_ptr[i], lideg_ptr[i], ptr);
       
-      resample_num_this_thread += per_row_count;
+      per_thread_n[thread_id] += *ptr;
 
       for (int64_t j = 0; j < num_picks; ++j) {
         const IdxType picked = picked_idata[row_offset + j];
@@ -360,14 +370,14 @@ COOMatrix CSRRowWisePickWithN(
         picked_idata[row_offset + j] = data ? data[picked] : picked;
       }
     }
-    resample_num_all[thread_id] = resample_num_this_thread;
+#pragma omp barrier
   }
 
   const int64_t new_len = global_prefix.back();
 	
   *resample_num = 0;
-  for(auto v : resample_num_all){
-  	*resample_num += v;
+  for(int i=0;i < num_threads; i++){
+  	*resample_num += per_thread_n[i];
   }
 
   return COOMatrix(

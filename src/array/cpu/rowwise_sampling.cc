@@ -238,7 +238,7 @@ inline PickFn<IdxType> GetSamplingBiasedPickFn(
 template <DGLDeviceType XPU, typename IdxType, typename DType>
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, NDArray prob_or_mask,
-    bool replace, int64_t* resample_num) {
+    bool replace, IdArray gideg, IdArray lideg, int64_t* resample_num) {
     //, IdArray gideg, IdArray lideg) {
   // If num_samples is -1, select all neighbors without replacement.
   printf("t10n %s\n", __func__);
@@ -252,21 +252,21 @@ COOMatrix CSRRowWiseSampling(
 }
 
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, float>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, float>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, double>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, double>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, int8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, int8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, uint8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, uint8_t>(
-    CSRMatrix, IdArray, int64_t, NDArray, bool, int64_t*);
+    CSRMatrix, IdArray, int64_t, NDArray, bool, IdArray, IdArray, int64_t*);
 
 template <DGLDeviceType XPU, typename IdxType, typename DType>
 COOMatrix CSRRowWisePerEtypeSampling(
@@ -317,6 +317,12 @@ COOMatrix CSRRowWiseSamplingUniform(
   // If num_samples is -1, select all neighbors without replacement.
   printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
+  if( !gideg.defined() || gideg->shape[0] == 0 ){
+      auto num_picks_fn =
+      GetSamplingUniformNumPicksFn<IdxType>(num_samples, replace);
+    auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);
+    return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn, num_picks_fn);
+  }
   auto num_picks_fn =
       GetSamplingUniformNumPicksWithNFn<IdxType>(num_samples, replace);
   //auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);

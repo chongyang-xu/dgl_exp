@@ -193,7 +193,7 @@ COOMatrix CSRRowWisePerEtypeSampling(
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix CSRRowWiseSamplingUniform(
     CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace,
-    IdArray gideg, IdArray lideg, int64_t* resample_num = nullptr);
+    IdArray gideg = IdArray(), IdArray lideg = IdArray(), int64_t* resample_num = nullptr);
 
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix CSRRowWisePerEtypeSamplingUniform(

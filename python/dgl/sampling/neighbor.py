@@ -183,7 +183,7 @@ DGLGraph.sample_etype_neighbors = utils.alias_func(sample_etype_neighbors)
 def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None,
                      replace=False, copy_ndata=True, copy_edata=True,
                      _dist_training=False, exclude_edges=None,
-                     output_device=None, degs=(None, None)):
+                     output_device=None, degs=(None, None), resample_count=None):
     """Sample neighboring edges of the given nodes and return the induced subgraph.
 
     For each node, a number of inbound (or outbound when ``edge_dir == 'out'``) edges
@@ -323,11 +323,11 @@ def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None,
         frontier = _sample_neighbors(
             g, nodes, fanout, edge_dir=edge_dir, prob=prob,
             replace=replace, copy_ndata=copy_ndata, copy_edata=copy_edata,
-            exclude_edges=exclude_edges, degs=degs)
+            exclude_edges=exclude_edges, degs=degs, resample_count=resample_count)
     else:
         frontier = _sample_neighbors(
             g, nodes, fanout, edge_dir=edge_dir, prob=prob,
-            replace=replace, copy_ndata=copy_ndata, copy_edata=copy_edata, degs=degs)
+            replace=replace, copy_ndata=copy_ndata, copy_edata=copy_edata, degs=degs, resample_count=resample_count)
         if exclude_edges is not None:
             eid_excluder = EidExcluder(exclude_edges)
             frontier = eid_excluder(frontier)
@@ -335,7 +335,7 @@ def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None,
 
 def _sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None,
                       replace=False, copy_ndata=True, copy_edata=True,
-                      _dist_training=False, exclude_edges=None, degs=degs):
+                      _dist_training=False, exclude_edges=None, degs=(None, None), resample_count=None):
     if not isinstance(nodes, dict):
         if len(g.ntypes) > 1:
             raise DGLError("Must specify node type when the graph is not homogeneous.")
@@ -387,7 +387,7 @@ def _sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None,
     gideg, lideg = degs
     subgidx = _CAPI_DGLSampleNeighbors(
             g._graph, nodes_all_types, fanout_array, edge_dir, prob_arrays,
-            excluded_edges_all_t, replace, gideg, lideg)
+            excluded_edges_all_t, replace, gideg, lideg, resample_count)
     induced_edges = subgidx.induced_edges
     ret = DGLGraph(subgidx.graph, g.ntypes, g.etypes)
 

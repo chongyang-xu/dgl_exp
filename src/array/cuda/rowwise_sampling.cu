@@ -332,7 +332,8 @@ COOMatrix _CSRRowWiseSamplingUniform(
 
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix CSRRowWiseSamplingUniform(
-    CSRMatrix mat, IdArray rows, const int64_t num_picks, const bool replace) {
+    CSRMatrix mat, IdArray rows, const int64_t num_picks, const bool replace,
+    IdArray gideg, IdArray lideg, int64_t* resample_num) {
   if (num_picks == -1) {
     // Basically this is UnitGraph::InEdges().
     COOMatrix coo = CSRToCOO(CSRSliceRows(mat, rows), false);
@@ -346,9 +347,9 @@ COOMatrix CSRRowWiseSamplingUniform(
 }
 
 template COOMatrix CSRRowWiseSamplingUniform<kDGLCUDA, int32_t>(
-    CSRMatrix, IdArray, int64_t, bool);
+    CSRMatrix, IdArray, const int64_t, const bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSamplingUniform<kDGLCUDA, int64_t>(
-    CSRMatrix, IdArray, int64_t, bool);
+    CSRMatrix, IdArray, const int64_t, const bool, IdArray, IdArray, int64_t*);
 
 }  // namespace impl
 }  // namespace aten

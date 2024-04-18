@@ -69,20 +69,30 @@ void RandomEngine::UniformChoiceWithN(
     IdxType num, IdxType population, IdxType* out, bool replace,
     IdxType gideg, IdxType lideg, int64_t* resample_num) {
 
+  CHECK_GE(num, 0) << "The numbers to sample should be non-negative.";
+  CHECK_GE(population, 0) << "The population size should be non-negative.";
+  CHECK_GE(lideg, 0) << "The population size should be non-negative.";
+  CHECK_GE(gideg, 0) << "The population size should be non-negative.";
+ 
   if (!replace)
-    CHECK_LE(2, 1)
-        << "replace=false is not considered here";
+    CHECK_LE(num, population)
+        << "Cannot take more sample than population when 'replace=false'";
 
   *resample_num = 0;
-  for (IdxType i = 0; i < num; ++i){
-	  IdxType val = -1; 
+  for (int i = 0; i < num; ++i){
+	  IdxType val = 0; 
+	  int counter = 0;
 	  do{
 	      val = RandInt(gideg);
-	      *resample_num++;
+	      *resample_num = *resample_num + 1;
+	      //std::cout << "(gideg, lideg)=" << gideg << ", " << lideg << "; idx=" << i <<", counter" << counter++ << ", tot " << *resample_num <<  std::endl;
+	      if (counter > 100){
+	      	break;
+	      }
 	  } while (val >= lideg);
 	  out[i] = val;
   }
-  *resample_num -= num;
+  *resample_num = *resample_num - num;
 }
 
 template <typename IdxType>
@@ -158,6 +168,11 @@ template void RandomEngine::UniformChoice<int32_t>(
     int32_t num, int32_t population, int32_t* out, bool replace);
 template void RandomEngine::UniformChoice<int64_t>(
     int64_t num, int64_t population, int64_t* out, bool replace);
+
+template void RandomEngine::UniformChoiceWithN<int32_t>(
+    int32_t num, int32_t population, int32_t* out, bool replace, int32_t gideg, int32_t lideg, int64_t*);
+template void RandomEngine::UniformChoiceWithN<int64_t>(
+    int64_t num, int64_t population, int64_t* out, bool replace, int64_t gideg, int64_t lideg, int64_t*);
 
 template <typename IdxType, typename FloatType>
 void RandomEngine::BiasedChoice(

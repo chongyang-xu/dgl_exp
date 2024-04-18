@@ -566,7 +566,10 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
       IdArray lideg = args[8];
       IdArray counter = args[9];
 
-      int64_t* counter_ptr = static_cast<int64_t*>(counter->data);
+      int64_t* counter_ptr = nullptr;
+      if(counter.defined()){
+      	counter_ptr = static_cast<int64_t*>(counter->data);
+      }
       CHECK(dir_str == "in" || dir_str == "out")
           << "Invalid edge direction. Must be \"in\" or \"out\".";
       EdgeDir dir = (dir_str == "in") ? EdgeDir::kIn : EdgeDir::kOut;

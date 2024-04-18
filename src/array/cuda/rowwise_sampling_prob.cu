@@ -655,7 +655,7 @@ COOMatrix _CSRRowWiseSampling(
 template <DGLDeviceType XPU, typename IdType, typename DType>
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_picks, FloatArray prob,
-    bool replace) {
+    bool replace, IdArray gideg, IdArray lideg, int64_t* resample_num) {
   COOMatrix result;
   if (num_picks == -1) {
     // Basically this is UnitGraph::InEdges().
@@ -673,23 +673,23 @@ COOMatrix CSRRowWiseSampling(
 }
 
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int32_t, float>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int64_t, float>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int32_t, double>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int64_t, double>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 // These are not being called, but we instantiate them anyway to prevent missing
 // symbols in Debug build
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int32_t, int8_t>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int64_t, int8_t>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int32_t, uint8_t>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 template COOMatrix CSRRowWiseSampling<kDGLCUDA, int64_t, uint8_t>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool, IdArray, IdArray, int64_t*);
 
 }  // namespace impl
 }  // namespace aten
