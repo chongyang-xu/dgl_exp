@@ -127,14 +127,20 @@ if(replace) {
   *resample_num = *resample_num - num;
 } else {
         std::unordered_set<IdxType> selected;
-        while (static_cast<IdxType>(selected.size()) < num) {
+        std::unordered_set<IdxType> missed;
+        while (static_cast<IdxType>(selected.size()+missed.size()) < num) {
 	  IdxType val = RandInt(gideg);
-	  if(val >= lideg){
-	  	*resample_num = *resample_num + 1;
-		continue;
+	  if(val >=lideg){
+	  	missed.insert(val);
+	  }else{
+          	selected.insert(val);
 	  }
-          selected.insert(val);
         }
+	*resample_num = missed.size();
+        while (static_cast<IdxType>(selected.size()) < num) {
+	  IdxType val = RandInt(lideg);
+          selected.insert(val);
+	}
         std::copy(selected.begin(), selected.end(), out);
 }
 
