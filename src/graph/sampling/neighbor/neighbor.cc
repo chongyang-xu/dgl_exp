@@ -198,7 +198,7 @@ HeteroSubgraph SampleNeighbors(
 
   DGLContext ctx = aten::GetContextOf(nodes);
 
-  printf("t10n tag1");
+//  printf("t10n tag1");
   std::vector<HeteroGraphPtr> subrels(hg->NumEdgeTypes());
   std::vector<IdArray> induced_edges(hg->NumEdgeTypes());
   for (dgl_type_t etype = 0; etype < hg->NumEdgeTypes(); ++etype) {
@@ -223,7 +223,7 @@ HeteroSubgraph SampleNeighbors(
       auto avail_fmt = hg->SelectFormat(etype, req_fmt);
       switch (avail_fmt) {
         case SparseFormat::kCOO:
-  	  printf("t10n kcoo");
+//  	  printf("t10n kcoo");
           if (dir == EdgeDir::kIn) {
             sampled_coo = aten::COOTranspose(aten::COORowWiseSampling(
                 aten::COOTranspose(hg->GetCOOMatrix(etype)), nodes_ntype,
@@ -235,7 +235,7 @@ HeteroSubgraph SampleNeighbors(
           }
           break;
         case SparseFormat::kCSR:
-  	  printf("t10n kcsr");
+//  	  printf("t10n kcsr");
           CHECK(dir == EdgeDir::kOut)
               << "Cannot sample out edges on CSC matrix.";
           sampled_coo = aten::CSRRowWiseSampling(
@@ -243,7 +243,7 @@ HeteroSubgraph SampleNeighbors(
               prob_or_mask[etype], replace);
           break;
         case SparseFormat::kCSC:
-  	  printf("t10n kcsc");
+//  	  printf("t10n kcsc");
           CHECK(dir == EdgeDir::kIn) << "Cannot sample in edges on CSR matrix.";
           sampled_coo = aten::CSRRowWiseSampling(
               hg->GetCSCMatrix(etype), nodes_ntype, fanouts[etype],

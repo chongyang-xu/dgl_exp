@@ -241,7 +241,7 @@ COOMatrix CSRRowWiseSampling(
     bool replace, IdArray gideg, IdArray lideg, int64_t* resample_num) {
     //, IdArray gideg, IdArray lideg) {
   // If num_samples is -1, select all neighbors without replacement.
-  printf("t10n %s\n", __func__);
+//printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
   CHECK(prob_or_mask.defined());
   auto num_picks_fn =
@@ -315,7 +315,7 @@ COOMatrix CSRRowWiseSamplingUniform(
     CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace,
     IdArray gideg, IdArray lideg, int64_t* resample_num) {
   // If num_samples is -1, select all neighbors without replacement.
-  printf("t10n %s\n", __func__);
+  //printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
   if( !gideg.defined() || gideg->shape[0] == 0 ){
       auto num_picks_fn =
@@ -457,7 +457,7 @@ COOMatrix COORowWiseSamplingUniform(
     COOMatrix mat, IdArray rows, int64_t num_samples, bool replace){
     //IdArray gideg, IdArray lideg) {
   // If num_samples is -1, select all neighbors without replacement.
-  printf("t10n %s\n", __func__);
+  //printf("t10n %s\n", __func__);
   replace = (replace && num_samples != -1);
   auto num_picks_fn =
       GetSamplingUniformNumPicksFn<IdxType>(num_samples, replace);

@@ -64,6 +64,38 @@ template void RandomEngine::Choice<int32_t, uint8_t>(
 template void RandomEngine::Choice<int64_t, uint8_t>(
     int64_t num, FloatArray prob, int64_t* out, bool replace);
 
+//
+//  range means sampling is from [0, range)
+//  k means sampling k numers from range
+//  out save k results
+//  
+//  actual_range is when there is actually part of range is usebal,
+//  sampled value out of [0, actural_range) are marked as -1
+
+/*
+template <typename IdxType>
+IdxType reservoir_sampling(IdxType range, IdxType k, IdxType* out, IdxType actual_range){
+	for(int i=0; i < range; i++){
+		if(i < k){
+			out[i] = i;
+		}else{
+	      		IdxType val = RandomEngine::RandInt(i);
+			if (val < k){
+			    out[val] = i;
+			}
+		}
+	}
+	IdxType count = 0;
+	for(int i = 0; i < k; i++){
+		if (out[i] >= actual_range){
+			out[i] = -1;
+			count ++;
+		}
+	}
+	return count;
+}
+*/
+
 template <typename IdxType>
 void RandomEngine::UniformChoiceWithN(
     IdxType num, IdxType population, IdxType* out, bool replace,
@@ -79,20 +111,33 @@ void RandomEngine::UniformChoiceWithN(
         << "Cannot take more sample than population when 'replace=false'";
 
   *resample_num = 0;
+if(replace) {
   for (int i = 0; i < num; ++i){
 	  IdxType val = 0; 
 	  int counter = 0;
 	  do{
 	      val = RandInt(gideg);
 	      *resample_num = *resample_num + 1;
-	      //std::cout << "(gideg, lideg)=" << gideg << ", " << lideg << "; idx=" << i <<", counter" << counter++ << ", tot " << *resample_num <<  std::endl;
-	      if (counter > 100){
+	      if (counter > gideg){
 	      	break;
 	      }
 	  } while (val >= lideg);
 	  out[i] = val;
   }
   *resample_num = *resample_num - num;
+} else {
+        std::unordered_set<IdxType> selected;
+        while (static_cast<IdxType>(selected.size()) < num) {
+	  IdxType val = RandInt(gideg);
+	  if(val >= lideg){
+	  	*resample_num = *resample_num + 1;
+		continue;
+	  }
+          selected.insert(val);
+        }
+        std::copy(selected.begin(), selected.end(), out);
+}
+
 }
 
 template <typename IdxType>
