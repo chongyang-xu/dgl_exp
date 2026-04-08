@@ -1,5 +1,5 @@
 # About
-This repo contains the implementation and modification for the survey paper for graph nerual network partitioning.
+This repo contains the implementation in and modification for DGL. These changes are purposed for the survey paper in graph nerual network partitioning.
 
 ## Citation
 ```
